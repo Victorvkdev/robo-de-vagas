@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       modo:
-        description: "busca | dry-run (só contagens, sem gravar) | lista (refaz a lista de hoje)"
+        description: "busca | dry-run (só contagens, sem gravar) | lista (refaz a lista de hoje) | teste-ia"
         default: busca
         type: choice
-        options: [busca, dry-run, lista]
+        options: [busca, dry-run, lista, teste-ia]
 permissions:
   contents: read
 concurrency:
@@ -40,5 +40,6 @@ jobs:
           case "$MODO" in
             dry-run) python -m engine busca --dry-run ;;
             lista)   python -m engine busca --no-collect --force-list ;;
+            teste-ia) python -m engine teste-ia ;;
             *)       python -m engine busca ;;
           esac

@@ -100,6 +100,27 @@ def cmd_saude(a):
     return 0
 
 
+def cmd_teste_ia(a):
+    """Testa a chave e o modelo do Gemini com um prompt bobo (não toca no banco)."""
+    gem = ai.Gemini.from_env()
+    if not gem:
+        print("teste-ia: GEMINI_API_KEY ausente")
+        return 1
+    try:
+        print("teste-ia: ok (%s): %s" % (gem.model, gem.generate('Responda só com o JSON ["ok"]')[:80]))
+        return 0
+    except Exception as e:  # noqa: BLE001
+        print("teste-ia: falhou: %s" % str(e)[:300])
+        try:
+            r = requests.get(ai.BASE + "/models", params={"key": gem.key}, timeout=30)
+            names = [m["name"] for m in r.json().get("models", [])] if r.ok else []
+            print("teste-ia: /models HTTP %s, %d modelos; flash: %s" % (
+                r.status_code, len(names), ", ".join(n for n in names if "flash" in n)[:400]))
+        except Exception as e2:  # noqa: BLE001
+            print("teste-ia: /models falhou: %s" % type(e2).__name__)
+        return 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="engine")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -113,8 +134,9 @@ def main(argv=None):
     b.set_defaults(do_collect_check=True)
     s = sub.add_parser("saude")
     s.add_argument("--local", default=None)
+    sub.add_parser("teste-ia")
     a = ap.parse_args(argv)
-    return {"busca": cmd_busca, "saude": cmd_saude}[a.cmd](a)
+    return {"busca": cmd_busca, "saude": cmd_saude, "teste-ia": cmd_teste_ia}[a.cmd](a)
 
 
 if __name__ == "__main__":

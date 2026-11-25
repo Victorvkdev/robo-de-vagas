@@ -67,7 +67,12 @@ class Gemini:
             if r.status_code in (429, 500, 503) and attempt < 2:
                 time.sleep(15 * (attempt + 1))
                 continue
-            r.raise_for_status()
+            if not r.ok:
+                try:
+                    msg = r.json().get("error", {}).get("message", "")
+                except ValueError:
+                    msg = r.text
+                raise RuntimeError("HTTP %s em %s: %s" % (r.status_code, self.model, msg[:200]))
             parts = ((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
             return "".join(p.get("text", "") for p in parts)
         raise RuntimeError("Gemini sem resposta")
@@ -106,7 +111,7 @@ def enrich(gem, jobs, perfil):
         try:
             items = _parse(gem.generate(PROMPT.format(perfil=perfil, vagas=vagas)))
         except Exception as e:  # noqa: BLE001
-            print("gemini: falhou no lote %d (%s)" % (i // BATCH + 1, type(e).__name__))
+            print("gemini: falhou no lote %d (%s)" % (i // BATCH + 1, str(e)[:260]))
             continue
         for it in items:
             try:
