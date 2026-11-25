@@ -8,7 +8,6 @@ import time
 import requests
 
 BASE = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_MODEL = "gemini-2.5-flash"
 BATCH = 20
 
 PROMPT = """Você prepara cards de vagas para o Vk, em português do Brasil, curtos e factuais.
@@ -32,10 +31,17 @@ VAGAS:
 """
 
 
+# ordem de preferência; chaves novas não acessam modelos antigos e alguns 'preview' têm cota zero no plano grátis
+PREFERRED = ("gemini-flash-latest", "gemini-3-flash", "gemini-2.5-flash", "gemini-flash-lite-latest",
+             "gemini-3.1-flash-lite", "gemini-2.5-flash-lite")
+
+
 class Gemini:
     def __init__(self, key, model=None):
         self.key = key
-        self.model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
+        self.forced = model or os.environ.get("GEMINI_MODEL")
+        self.model = None
+        self.queue = None
         self.calls = 0
 
     @classmethod
@@ -43,39 +49,52 @@ class Gemini:
         k = os.environ.get("GEMINI_API_KEY")
         return cls(k) if k else None
 
-    def _pick_model(self):
-        """Se o modelo padrão sumir, escolhe o primeiro 'flash' disponível na conta."""
-        r = requests.get(BASE + "/models", params={"key": self.key}, timeout=30)
-        r.raise_for_status()
-        names = [m["name"].split("/", 1)[-1] for m in r.json().get("models", [])
-                 if "generateContent" in (m.get("supportedGenerationMethods") or [])]
-        flash = [n for n in names if "flash" in n and "lite" not in n and "image" not in n and "tts" not in n]
-        if not flash:
-            raise RuntimeError("nenhum modelo flash disponível")
-        self.model = sorted(flash, reverse=True)[0]
+    def _candidates(self):
+        if self.forced:
+            return [self.forced]
+        try:
+            r = requests.get(BASE + "/models", params={"key": self.key}, timeout=30)
+            r.raise_for_status()
+            names = {m["name"].split("/", 1)[-1] for m in r.json().get("models", [])
+                     if "generateContent" in (m.get("supportedGenerationMethods") or [])}
+        except Exception:  # noqa: BLE001
+            return list(PREFERRED)
+        ok = [m for m in PREFERRED if m in names]
+        return ok or sorted(n for n in names if "flash" in n and not re.search(r"preview|image|tts|omni|live", n))
 
-    def generate(self, prompt, retry_model=True):
-        url = "%s/models/%s:generateContent" % (BASE, self.model)
+    def _post(self, model, body):
+        return requests.post("%s/models/%s:generateContent" % (BASE, model), params={"key": self.key}, json=body,
+                             timeout=120)
+
+    def generate(self, prompt):
         body = {"contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json"}}
-        for attempt in range(3):
-            r = requests.post(url, params={"key": self.key}, json=body, timeout=120)
-            self.calls += 1
-            if r.status_code == 404 and retry_model:
-                self._pick_model()
-                return self.generate(prompt, retry_model=False)
-            if r.status_code in (429, 500, 503) and attempt < 2:
-                time.sleep(15 * (attempt + 1))
+        if self.queue is None:
+            self.queue = self._candidates()
+        last = "sem modelo disponível"
+        while self.queue:
+            model = self.queue[0]
+            for attempt in range(2):
+                r = self._post(model, body)
+                self.calls += 1
+                if r.status_code in (500, 503) or (r.status_code == 429 and attempt == 0):
+                    time.sleep(20)
+                    continue
+                break
+            if r.ok:
+                self.model = model
+                parts = ((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+                return "".join(p.get("text", "") for p in parts)
+            try:
+                msg = r.json().get("error", {}).get("message", "")
+            except ValueError:
+                msg = r.text
+            last = "HTTP %s em %s: %s" % (r.status_code, model, msg[:160])
+            if r.status_code in (404, 429, 403, 400) and len(self.queue) > 1:
+                self.queue.pop(0)  # tenta o próximo modelo
                 continue
-            if not r.ok:
-                try:
-                    msg = r.json().get("error", {}).get("message", "")
-                except ValueError:
-                    msg = r.text
-                raise RuntimeError("HTTP %s em %s: %s" % (r.status_code, self.model, msg[:200]))
-            parts = ((r.json().get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
-            return "".join(p.get("text", "") for p in parts)
-        raise RuntimeError("Gemini sem resposta")
+            break
+        raise RuntimeError(last)
 
 
 def _parse(text):

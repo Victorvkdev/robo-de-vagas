@@ -107,7 +107,8 @@ def cmd_teste_ia(a):
         print("teste-ia: GEMINI_API_KEY ausente")
         return 1
     try:
-        print("teste-ia: ok (%s): %s" % (gem.model, gem.generate('Responda só com o JSON ["ok"]')[:80]))
+        out = gem.generate('Responda só com o JSON ["ok"]')
+        print("teste-ia: ok (%s): %s" % (gem.model, out[:80]))
         return 0
     except Exception as e:  # noqa: BLE001
         print("teste-ia: falhou: %s" % str(e)[:300])
