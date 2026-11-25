@@ -12,5 +12,9 @@ database_name = "robo-de-vagas"
 database_id = "c607d58c-1550-4341-b749-c505ab72750b"
 migrations_dir = "migrations"
 
+# Lista diária: tenta às 8h, 8h30 … 11h30 (Fortaleza, UTC-3) até a busca das 6h ter montado a lista.
+[triggers]
+crons = ["0,30 11-14 * * *"]
+
 [observability]
 enabled = true

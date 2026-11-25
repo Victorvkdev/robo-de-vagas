@@ -1,0 +1,44 @@
+name: busca
+# 6h em Fortaleza (09:00 UTC): coleta, pontua, grava no D1 e monta a lista. O Worker manda às 8h.
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "busca | dry-run (só contagens, sem gravar) | lista (refaz a lista de hoje)"
+        default: busca
+        type: choice
+        options: [busca, dry-run, lista]
+permissions:
+  contents: read
+concurrency:
+  group: busca
+  cancel-in-progress: false
+jobs:
+  busca:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/requirements.txt
+      - run: pip install -r engine/requirements.txt
+      - name: Rodar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODO: ${{ inputs.modo || 'busca' }}
+        run: |
+          case "$MODO" in
+            dry-run) python -m engine busca --dry-run ;;
+            lista)   python -m engine busca --no-collect --force-list ;;
+            *)       python -m engine busca ;;
+          esac

@@ -1,0 +1,121 @@
+"""CLI do motor.
+
+  python -m engine busca                 coleta, grava no D1 e monta a lista do dia
+  python -m engine busca --dry-run       só coleta e pontua (sem D1, sem segredos); mostra contagens
+  python -m engine busca --no-collect    só (re)monta a lista com o que já está no banco
+  python -m engine busca --force-list    refaz a lista de hoje (e o Worker manda de novo)
+  python -m engine saude                 resumo da semana + saúde das fontes no Telegram
+  --local caminho.db                     usa um SQLite local em vez do D1
+"""
+import argparse
+import json
+import os
+import sys
+import time
+
+import requests
+import yaml
+
+from . import ai, pipeline, score, sources
+from .d1 import D1, LocalDB
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_cfg():
+    with open(os.path.join(os.path.dirname(__file__), "config.yaml"), encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def get_db(local):
+    if local:
+        return LocalDB(local, os.path.join(ROOT, "migrations") if not os.path.exists(local) else None)
+    return D1.from_env()
+
+
+def tg_send(text):
+    tok, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if not tok or not chat:
+        print("telegram: sem token/chat, mensagem não enviada")
+        return
+    r = requests.post("https://api.telegram.org/bot%s/sendMessage" % tok, timeout=30,
+                      json={"chat_id": chat, "text": text, "parse_mode": "HTML",
+                            "link_preview_options": {"is_disabled": True}})
+    print("telegram:", "ok" if r.ok else r.status_code)
+
+
+def cmd_busca(a):
+    cfg = load_cfg()
+    if a.dry_run:
+        now = time.time()
+        res = sources.collect(cfg, only=set(a.only.split(",")) if a.only else None)
+        rows, by_source = pipeline.score_jobs(res["jobs"], cfg, now, score.DEFAULT_WEIGHTS, {}, {})
+        areas = {}
+        for r in rows:
+            areas[r["area"]] = areas.get(r["area"], 0) + 1
+        print(json.dumps(dict(coletadas=res["raw_count"], nas_areas=len(res["jobs"]), aproveitadas=len(rows),
+                              por_area=areas, aproveitadas_por_fonte=by_source, por_fonte=res["counts"],
+                              erros={k: v for k, v in res["errors"].items()}), ensure_ascii=False, indent=1))
+        return 0
+    db = get_db(a.local)
+    gem = None if a.no_ai else ai.Gemini.from_env()
+    s = pipeline.run(db, cfg, do_collect=not a.no_collect, gem=gem, force_list=a.force_list)
+    print(json.dumps(s, ensure_ascii=False, indent=1))
+    if a.do_collect_check and not a.no_collect and s.get("aproveitadas", 0) == 0:
+        tg_send("⚠️ Busca de hoje não achou nenhuma vaga aproveitável. Confira o Actions.")
+        return 1
+    return 0
+
+
+def cmd_saude(a):
+    db = get_db(a.local)
+    now = time.time()
+    wk = now - 7 * 86400
+    one = lambda sql, p=(): (db.query(sql, list(p)) or [{"n": 0}])[0]["n"] or 0  # noqa: E731
+    novas = one("SELECT COUNT(*) AS n FROM jobs WHERE first_seen >= ? AND origin LIKE '%v3%'", [wk])
+    listadas = one("SELECT COUNT(*) AS n FROM jobs WHERE list_date >= ?", [pipeline.local_date(wk)])
+    aprovadas = one("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('aprovada','precisa_voce') AND status_ts >= ?", [wk])
+    enviadas = one("SELECT COUNT(*) AS n FROM applications WHERE ts >= ?", [wk])
+    entrevistas = one("SELECT COUNT(*) AS n FROM events WHERE kind='entrevista' AND ts >= ?", [wk])
+    mortas = db.query("SELECT key FROM sources_health WHERE disabled = 1 ORDER BY key")
+    quebradas = db.query("SELECT key, last_error FROM sources_health WHERE disabled = 0 AND last_error IS NOT NULL "
+                         "AND instr(key, ':') = 0 ORDER BY key")
+    paradas = db.query("SELECT key FROM sources_health WHERE instr(key, ':') = 0 AND last_ok_ts < ? ORDER BY key",
+                       [now - 3 * 86400])
+    linhas = ["<b>Resumo da semana</b>",
+              "Vagas novas: %d · Listadas: %d · Aprovadas: %d · Enviadas: %d · Entrevistas: %d"
+              % (novas, listadas, aprovadas, enviadas, entrevistas), "",
+              "<b>Saúde das fontes</b>",
+              "Boards desligados (404 três vezes): %d" % len(mortas)]
+    if quebradas:
+        linhas.append("Com erro na última busca: " + ", ".join(r["key"] for r in quebradas))
+    if paradas:
+        linhas.append("Sem resposta há 3+ dias: " + ", ".join(r["key"] for r in paradas))
+    if not quebradas and not paradas:
+        linhas.append("Todas as fontes responderam ✅")
+    tg_send("\n".join(linhas))
+    db.query("INSERT INTO runs(kind, started_ts, finished_ts, ok, summary) VALUES ('saude', ?, ?, 1, ?)",
+             [now, time.time(), json.dumps(dict(mortas=len(mortas), quebradas=len(quebradas)))])
+    print(json.dumps(dict(mortas=len(mortas), quebradas=len(quebradas), paradas=len(paradas))))
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="engine")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("busca")
+    b.add_argument("--dry-run", action="store_true")
+    b.add_argument("--only", default="", help="fontes separadas por vírgula (só no --dry-run)")
+    b.add_argument("--no-collect", action="store_true")
+    b.add_argument("--no-ai", action="store_true")
+    b.add_argument("--force-list", action="store_true")
+    b.add_argument("--local", default=None)
+    b.set_defaults(do_collect_check=True)
+    s = sub.add_parser("saude")
+    s.add_argument("--local", default=None)
+    a = ap.parse_args(argv)
+    return {"busca": cmd_busca, "saude": cmd_saude}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

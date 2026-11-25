@@ -54,8 +54,19 @@ export interface JobRow {
   first_seen: number | null;
 }
 
-/** Prévia do ranking: as melhores vagas abertas (a lista oficial chega na entrega 3). */
+/** Lista do dia mais recente (ordem da lista); sem lista, as melhores vagas abertas do banco. */
 export async function topJobs(db: D1Database, limit = 10): Promise<JobRow[]> {
+  const listed = await db
+    .prepare(
+      `SELECT id, title, company, url, fit, source, location, area, status, first_seen
+         FROM jobs
+        WHERE list_date = (SELECT MAX(list_date) FROM jobs WHERE list_date IS NOT NULL) AND list_pos IS NOT NULL
+        ORDER BY list_pos
+        LIMIT ?`
+    )
+    .bind(limit)
+    .all<JobRow>();
+  if (listed.results.length) return listed.results;
   const r = await db
     .prepare(
       `SELECT id, title, company, url, fit, source, location, area, status, first_seen

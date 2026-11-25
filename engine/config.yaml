@@ -1,0 +1,303 @@
+# Configuração pública do motor (sem dados pessoais). Pretensão, feeds RSS e pesos ficam no D1 (settings).
+max_age_days: 30
+ghost_drop: 80
+geo:
+  ok_terms:
+  - worldwide
+  - anywhere
+  - global
+  - brazil
+  - brasil
+  - latam
+  - latin america
+  - americas
+  - remote - global
+  - south america
+  - latam remote
+  - america latina
+  - work from anywhere
+  - international
+  block_terms:
+  - us only
+  - u.s. only
+  - usa only
+  - united states only
+  - must be authorized to work in the us
+  - us citizens
+  - must reside in the united states
+  - canada only
+  - uk only
+  - eu only
+  - europe only
+  - must be located in the us
+  - us-based
+  - green card
+  - security clearance
+keywords:
+  figma: 4
+  design system: 4
+  design tokens: 2
+  gamif: 5
+  crm: 3
+  react: 3
+  next.js: 2
+  typescript: 3
+  javascript: 2
+  html: 2
+  css: 2
+  tailwind: 2
+  igaming: 6
+  casino: 6
+  cassino: 6
+  betting: 5
+  apostas: 5
+  games: 3
+  jogos: 3
+  a/b: 2
+  retention: 2
+  onboarding: 2
+  conversion: 2
+  accessibility: 2
+  prototyp: 2
+  webflow: 2
+  email: 1
+  latam: 4
+  brazil: 4
+  brasil: 4
+  contractor: 2
+  pj: 2
+sources:
+  remoteok: true
+  remotive: true
+  jobicy: true
+  arbeitnow: true
+  himalayas: true
+  weworkremotely: true
+  workingnomads: true
+  getonboard: true
+  themuse: true
+  gupy: true
+  workable_search: true
+  linkedin: true
+  greenhouse:
+  - figma
+  - vercel
+  - gitlab
+  - discord
+  - duolingo
+  - webflow
+  - dropbox
+  - cloudflare
+  - datadog
+  - mongodb
+  - coinbase
+  - reddit
+  - pinterest
+  - airtable
+  - grammarly
+  - squarespace
+  - remote
+  - oyster
+  - ebanx
+  - vtex
+  - nubank
+  - gympass
+  - wellhub
+  - rappi
+  - creditas
+  - quintoandar
+  - hotmart
+  - stone
+  - mutantbr
+  - dock
+  - pipefy
+  - toptal
+  - turing
+  - zapier
+  - doist
+  - buffer
+  - hotjar
+  - sentry
+  - mozilla
+  - elastic
+  - grafana
+  - canonical
+  - automattic
+  - wikimedia
+  - stripe
+  - gusto
+  - brex
+  - airbnb
+  - asana
+  - okta
+  - twilio
+  - fivetran
+  - retool
+  - miro
+  - invision
+  - framer
+  - lattice
+  - rippling
+  - gemini
+  - bitso
+  - mercadolibre
+  - adyen
+  - mollie
+  - klarna
+  - monzo
+  - n8n
+  - trustpilot
+  - cultureamp
+  - airwallex
+  - grab
+  - rakuten
+  - mercari
+  - sumup
+  - getyourguide
+  - contentful
+  - celonis
+  - taxfix
+  - babbel
+  - wise
+  - revolut
+  - checkoutcom
+  - zendesk
+  - freshworks
+  - razorpay
+  - shopify
+  - intercom
+  - docker
+  - hashicorp
+  - calm
+  - headspace
+  - spotify
+  - atlassian
+  - canva
+  - xero
+  - trello
+  - monday
+  - wix
+  - fiverr
+  - lemonade
+  - payoneer
+  - remotecom
+  - wildlifestudios
+  - cloudwalk
+  - mural
+  - articulate
+  - invisionapp
+  - kraken
+  - tether
+  - okx
+  - betterstack
+  - agilityrobotics
+  - clickup
+  - sezzle
+  - smartrent
+  lever:
+  - palantir
+  - spotify
+  - kraken
+  - plaid
+  - netlify
+  - wellhub
+  - gympass
+  - creditas
+  - quintoandar
+  - nubank
+  - loft
+  - hotmart
+  - rappi
+  - ifood
+  - zenvia
+  - neon
+  - dlocal
+  - wizeline
+  - jobgether
+  - remofirst
+  - kovi
+  - cobli
+  - olist
+  - pagerduty
+  - outreach
+  - mercadobitcoin
+  - zepz
+  - veriff
+  - binance
+  - bairesdev
+  - nearsure
+  - ciandt
+  ashby:
+  - linear
+  - ramp
+  - openai
+  - posthog
+  - supabase
+  - deel
+  - notion
+  - clickup
+  - remote.com
+  - clerk
+  - resend
+  - raycast
+  - mercury
+  - retool
+  - vercel
+  - zapier
+  - wise
+  - dbt-labs
+  - descript
+  - ashby
+  - mux
+  - sanity
+  - cursor
+  - anysphere
+  - elevenlabs
+  - lovable
+  - n8n
+  - replit
+  - framer
+  - cal
+  - airwallex
+  - rippling
+  - plain
+  - runway
+  - synthesia
+  - polymarket
+  - kalshi
+  - rockstar
+  - lemon.io
+  - turing
+  workable:
+  - workable
+  - canva
+  - hotjar
+  - typeform
+  - sumup
+  - bitpanda
+  - pleo
+  - pipedrive
+  - gorgias
+  - payfit
+  - personio
+  - clickup
+  smartrecruiters:
+  - Visa
+  - Bosch
+  - Ubisoft
+  - Skechers
+  - McDonalds
+  - Wise
+  - Canva
+  - Square
+  - Experian
+  - Boomi
+  recruitee:
+  - bunq
+  - mollie
+  - tripadvisor
+  - getyourguide
+  - bitpanda
+  - omio
+  - sennder
+  - trade-republic

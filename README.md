@@ -7,7 +7,9 @@ This repo holds **code only**. All personal data lives in a private D1 database 
 ## Layout
 
 ```
-src/worker.ts          Telegram webhook (commands: /status /lista /painel /pausar /voltar)
+engine/                Job search engine (Python, runs on GitHub Actions): 20+ sources, scoring, D1 writes, daily list
+src/worker.ts          Telegram webhook + daily cron (list at 8am, ✅/❌ buttons, "ok 1 3 5")
+src/lib/lista.ts       List cards, approval parsing and queries
 src/lib/stats.ts       Queries shared by the bot and the dashboard
 panel/                 Dashboard (Cloudflare Pages + Functions, behind Cloudflare Access)
 migrations/            D1 schema
@@ -24,6 +26,17 @@ npm install
 ./scripts/setup.sh access   # after creating the Access app for the dashboard
 ```
 
+## Daily flow
+
+| When (UTC−3) | Where | What |
+|---|---|---|
+| 06:00 | Actions `busca` | Collect, score, dedupe, expire, pick the top 40, Gemini one-line summaries |
+| 08:00 | Worker cron | Sends the list to Telegram in blocks with ✅/❌ buttons |
+| any time | Telegram | `ok`, `ok 1 3 5`, `ok menos 2 4`, `/lista`, `/aprovadas` |
+| Mon 08:17 | Actions `saude` | Weekly summary + source health, keepalive commit |
+
+Manual run: Actions → busca → Run workflow (`dry-run` only prints counts, `lista` rebuilds today's list).
+
 ## Security
 
 - The bot only answers the configured `chat_id`; the webhook checks Telegram's secret header.
@@ -34,6 +47,6 @@ npm install
 
 1. Context document ✅
 2. Foundation: repo, D1, migration, bot, dashboard ✅
-3. Job search + daily list on Telegram
+3. Job search + daily list on Telegram ✅
 4. Email, calendar, drafts, follow-up
 5. Auto-apply on open ATS forms, network, freelance, talent pools
