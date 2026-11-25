@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Robô de Vagas</title>
+<style>
+:root{--bg:#0e1117;--card:#161a22;--line:#232836;--txt:#e8eaf0;--mut:#8b90a0;--blue:#8ab4ff;--green:#5fe0a0;--red:#ff7a7a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:32px 20px 60px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{font-size:22px;margin:0}
+small,.mut{color:var(--mut)}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:24px 0}
+@media(max-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+.card b{display:block;font-size:44px;line-height:1;margin-bottom:8px}
+.card span{color:var(--mut);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+.prox{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:24px}
+.prox h2{margin:4px 0 0;font-size:20px}
+nav{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-bottom:16px}
+nav button{background:none;border:0;color:var(--mut);font:inherit;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent}
+nav button[aria-selected=true]{color:var(--txt);border-color:var(--blue)}
+table{width:100%;border-collapse:collapse}
+td,th{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-weight:500;font-size:13px}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;background:#232836}
+.pill.recusada{color:var(--red)}.pill.entrevista,.pill.oferta{color:var(--green)}.pill.em_analise,.pill.enviada{color:var(--blue)}
+.err{color:var(--red);padding:20px 0}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Robô de Vagas</h1><small id="upd"></small></header>
+  <section class="grid" id="cards"></section>
+  <section class="prox" id="prox"><small>PRÓXIMA ENTREVISTA</small><h2>—</h2></section>
+  <nav role="tablist" id="tabs">
+    <button role="tab" data-tab="jobs" aria-selected="true">Hoje</button>
+    <button role="tab" data-tab="applications">Candidaturas</button>
+    <button role="tab" data-tab="network">Rede</button>
+    <button role="tab" data-tab="pools">Talent pools</button>
+  </nav>
+  <section id="view"></section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (ts) => ts ? new Date(ts * 1000).toLocaleString("pt-BR", { timeZone: "America/Fortaleza", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+const link = (url, t) => url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(t)}</a>` : esc(t);
+const api = async (p) => { const r = await fetch("/api/" + p, { credentials: "include" }); if (!r.ok) throw new Error(r.status); return r.json(); };
+
+async function loadStats() {
+  const s = await api("stats");
+  const card = (n, rot, cor) => `<div class="card"><b style="color:${cor}">${n}</b><span>${rot}</span></div>`;
+  $("#cards").innerHTML = card(s.aplicadas, "Aplicadas", "var(--txt)") + card(s.em_analise, "Em análise", "var(--blue)") +
+    card(s.entrevistas, "Entrevistas", "var(--green)") + card(s.recusadas, "Recusadas", "var(--red)");
+  $("#prox h2").innerHTML = s.proxima ? `${esc(s.proxima.empresa)} · ${fmt(s.proxima.quando)} ${s.proxima.link ? link(s.proxima.link, "· link") : ""}` : "Nenhuma marcada ainda";
+  $("#upd").textContent = "Atualizado " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+const views = {
+  async jobs() {
+    const rows = await api("jobs");
+    return `<table><tr><th>#</th><th>Vaga</th><th>Empresa</th><th>Nota</th><th>Fonte</th></tr>${rows.map((j, i) =>
+      `<tr><td>${i + 1}</td><td>${link(j.url, j.title)}</td><td>${esc(j.company)}</td><td>${Math.round(j.fit)}</td><td class="mut">${esc(j.source)}</td></tr>`).join("")}</table>`;
+  },
+  async applications() {
+    const rows = await api("applications");
+    return `<table><tr><th>Vaga</th><th>Empresa</th><th>Status</th><th>Desde</th></tr>${rows.map((a) =>
+      `<tr><td>${link(a.url, a.title)}</td><td>${esc(a.company)}</td><td><span class="pill ${esc(a.state)}">${esc(String(a.state).replace("_", " "))}</span></td><td class="mut">${fmt(a.state_ts || a.ts)}</td></tr>`).join("")}</table>`;
+  },
+  async network() {
+    const d = await api("network");
+    return `<p class="mut">${d.contatos} contatos · ${d.matches.length} vagas abertas em empresas onde você conhece alguém</p>
+      <table><tr><th>Empresa</th><th>Vaga</th><th>Contato</th></tr>${d.matches.map((m) =>
+      `<tr><td>${esc(m.company)}</td><td>${link(m.url, m.title)}</td><td>${link(m.contato_url, m.contato)} <span class="mut">${esc(m.position)}</span></td></tr>`).join("")}</table>`;
+  },
+  async pools() {
+    const rows = await api("pools");
+    return `<table><tr><th>Plataforma</th><th>Status</th><th>Atualizado</th></tr>${rows.map((p) =>
+      `<tr><td>${link(p.url, p.name)}</td><td>${esc(p.status).replace("_", " ")}</td><td class="mut">${fmt(p.last_update_ts) || "—"}</td></tr>`).join("")}</table>`;
+  },
+};
+
+async function show(tab) {
+  document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === tab));
+  $("#view").innerHTML = '<p class="mut">Carregando…</p>';
+  try { $("#view").innerHTML = await views[tab](); } catch (e) { $("#view").innerHTML = `<p class="err">Erro ${esc(e.message)}</p>`; }
+}
+
+$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) show(e.target.dataset.tab); });
+loadStats().catch((e) => { $("#cards").innerHTML = `<p class="err">Sem acesso à API (${esc(e.message)}).</p>`; });
+show("jobs");
+</script>
+</body>
+</html>

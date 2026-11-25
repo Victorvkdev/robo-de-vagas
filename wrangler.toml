@@ -1,0 +1,16 @@
+name = "robo-de-vagas"
+main = "src/worker.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[vars]
+PANEL_URL = "https://robo-de-vagas-painel.pages.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "robo-de-vagas"
+database_id = "__D1_ID__"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true

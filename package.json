@@ -1,0 +1,17 @@
+{
+  "name": "robo-de-vagas",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "deploy:worker": "wrangler deploy",
+    "deploy:panel": "cd panel && wrangler pages deploy --project-name robo-de-vagas-painel --branch main",
+    "db:migrate": "wrangler d1 migrations apply robo-de-vagas --remote",
+    "test": "python3 -m unittest discover -s tests -v"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261125.1",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.168.0"
+  }
+}

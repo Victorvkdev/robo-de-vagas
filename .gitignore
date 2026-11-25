@@ -1,0 +1,10 @@
+node_modules/
+.wrangler/
+data/
+*.db
+*.sqlite
+*.sql.gz
+.env*
+.dev.vars*
+.DS_Store
+__pycache__/
