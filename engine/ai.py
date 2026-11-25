@@ -90,7 +90,7 @@ class Gemini:
             except ValueError:
                 msg = r.text
             last = "HTTP %s em %s: %s" % (r.status_code, model, msg[:160])
-            if r.status_code in (404, 429, 403, 400) and len(self.queue) > 1:
+            if r.status_code in (404, 429, 403, 400, 500, 503) and len(self.queue) > 1:
                 self.queue.pop(0)  # tenta o próximo modelo
                 continue
             break
