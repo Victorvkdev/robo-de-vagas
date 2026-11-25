@@ -114,7 +114,7 @@ class PipelineTest(unittest.TestCase):
         # mesma busca no mesmo dia não refaz a lista
         s2 = pipeline.run(self.db, CFG, now=NOW + 600, collector=self.fake(jobs))
         self.assertEqual(s2["lista"].get("skipped"), "lista de hoje já existe")
-        self.assertEqual(self.db.query("SELECT seen_count FROM jobs WHERE id='j0'")[0]["seen_count"], 2)
+        self.assertEqual(s2["banco"]["iguais"], 11)  # nada mudou: nada regravado (ajuste b)
 
         # dia seguinte: quem ficou listada vira pulada; vaga de board OK que sumiu expira; slug 404 3x desliga
         tomorrow = NOW + 86400 * 1.2

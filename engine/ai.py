@@ -149,3 +149,85 @@ def resumo_regra(job):
         if 40 <= len(s) <= 160 and not re.search(r"cookie|equal opportunity|privacy", s, re.I):
             return s
     return d[:120] + ("…" if len(d) > 120 else "")
+
+
+# ---------------------------------------------------------------- e-mail (entrega 4)
+MAIL_CLASSES = ("entrevista", "agendar", "teste", "recrutador", "recusa", "recebida", "oferta", "orcamento", "spam")
+
+CLASSIFY_PROMPT = """Classifique o e-mail que o Vk (candidato a vagas de Product Design / UX / Front-end) recebeu.
+Classes:
+- entrevista: entrevista JÁ marcada, com data/hora
+- agendar: querem marcar entrevista/conversa e pedem horário ou mandam link de agenda
+- teste: teste técnico, desafio, case ou assessment
+- recrutador: recrutador/empresa pergunta algo ou espera resposta (pretensão, disponibilidade, interesse)
+- recusa: não seguiram com a candidatura
+- recebida: confirmação automática de candidatura recebida
+- oferta: proposta de emprego
+- orcamento: alguém pede orçamento/projeto freelance
+- spam: newsletter, alerta de vagas, marketing, comunidade, qualquer outra coisa
+Hoje é {hoje} (fuso do Vk: America/Fortaleza, UTC-3).
+Responda só com JSON: {{"classe": "...", "quando": "data/hora da entrevista em ISO 8601 COM fuso (ex.: 2026-12-02T14:00:00-05:00) ou vazio", "prazo": "prazo do teste em ISO 8601 ou vazio"}}
+Se o e-mail não diz o fuso, use o do remetente se for óbvio; senão -03:00.
+
+DE: {de}
+ASSUNTO: {assunto}
+TEXTO:
+{texto}
+"""
+
+DRAFT_PROMPT = """Você escreve a resposta de e-mail do Vk (Victor Cavalcante) para um recrutador.
+Regras:
+- Idioma: {idioma}, escrito de forma natural e nativa. Tom educado, direto, curto (até 120 palavras).
+- Use SÓ fatos do PERFIL abaixo. Nunca invente número, empresa, ferramenta, prazo ou salário.
+- Se perguntarem algo que o PERFIL não responde, diga que confirma e responde em seguida.
+- Pretensão salarial: use os valores do PERFIL para o regime/nível da vaga; se não der pra saber, diga que está aberto a conversar dentro da faixa da vaga.
+- Comece com saudação ({saudacao}). Não escreva assinatura nem assunto.
+{extra}
+Responda só com JSON: {{"resposta": "texto do e-mail"}}
+
+PERFIL:
+{perfil}
+
+E-MAIL RECEBIDO (de {de}, assunto "{assunto}"):
+{texto}
+"""
+
+
+def mail_classify(gem, de, assunto, texto, hoje):
+    try:
+        out = gem.generate(CLASSIFY_PROMPT.format(hoje=hoje, de=de, assunto=assunto, texto=texto[:3500]))
+        d = json.loads(re.sub(r"^```(?:json)?|```$", "", out.strip()).strip())
+    except Exception as e:  # noqa: BLE001
+        print("gemini e-mail: classificação falhou (%s)" % type(e).__name__)
+        return None
+    if not isinstance(d, dict) or d.get("classe") not in MAIL_CLASSES:
+        return None
+    return d
+
+
+def mail_draft(gem, perfil, de, assunto, texto, lang, saudacao, extra=""):
+    idioma = "português do Brasil" if lang == "pt" else ("espanhol" if lang == "es" else "inglês")
+    try:
+        out = gem.generate(DRAFT_PROMPT.format(idioma=idioma, saudacao=saudacao, extra=extra, perfil=perfil, de=de,
+                                               assunto=assunto, texto=texto[:3000]))
+        d = json.loads(re.sub(r"^```(?:json)?|```$", "", out.strip()).strip())
+        r = str(d.get("resposta") or "").strip() if isinstance(d, dict) else ""
+        return r or None
+    except Exception as e:  # noqa: BLE001
+        print("gemini e-mail: rascunho falhou (%s)" % type(e).__name__)
+        return None
+
+
+_NUMTOK = re.compile(r"\d[\d.,]*%?")
+
+
+def unverified_numbers(text, *allowed_sources):
+    """Números do rascunho que não aparecem no perfil nem no e-mail (checagem de fatos)."""
+    pool = " ".join(s or "" for s in allowed_sources)
+    pool_n = {re.sub(r"[.,%]", "", m) for m in _NUMTOK.findall(pool)}
+    bad = []
+    for m in _NUMTOK.findall(text or ""):
+        k = re.sub(r"[.,%]", "", m)
+        if k and k not in pool_n and m not in bad:
+            bad.append(m.rstrip(".,"))
+    return bad

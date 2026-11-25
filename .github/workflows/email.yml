@@ -1,0 +1,42 @@
+name: email
+# A cada 15 min: lê o Zoho (IMAP), classifica, avisa no Telegram, rascunha respostas e envia o que o Vk aprovou.
+# O Worker dispara "enviar" na hora em que ele toca ✉️ Enviar; o agendamento é a rede de segurança.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "ciclo (ler + avisar + enviar aprovados) | enviar (só aprovados) | teste (só login IMAP/SMTP)"
+        default: ciclo
+        type: choice
+        options: [ciclo, enviar, teste]
+permissions:
+  contents: read
+concurrency:
+  group: email
+  cancel-in-progress: false
+jobs:
+  email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/requirements.txt
+      - run: pip install -r engine/requirements.txt
+      - name: Rodar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_APP_PASSWORD: ${{ secrets.ZOHO_APP_PASSWORD }}
+          MODO: ${{ inputs.modo || 'ciclo' }}
+        run: python -m engine email --modo "$MODO"

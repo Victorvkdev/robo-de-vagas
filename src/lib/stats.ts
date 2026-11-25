@@ -22,7 +22,7 @@ export async function getStats(db: D1Database, now = Date.now() / 1000): Promise
     ),
     db
       .prepare(
-        `SELECT e.due_ts AS quando, j.company AS empresa, j.title AS cargo, e.link AS link
+        `SELECT e.due_ts AS quando, COALESCE(e.company, j.company) AS empresa, COALESCE(e.title, j.title) AS cargo, e.link AS link
            FROM events e LEFT JOIN jobs j ON j.id = e.job_id
           WHERE e.kind = 'entrevista' AND e.due_ts >= ?
           ORDER BY e.due_ts ASC LIMIT 1`

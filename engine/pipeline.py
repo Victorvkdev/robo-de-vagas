@@ -1,6 +1,7 @@
 """Ciclo diário: coleta -> nota -> grava no D1 -> expira/deduplica -> monta a lista do dia (top 40) -> Gemini.
 Os logs (públicos no Actions) só mostram contagens, nunca vagas, nomes ou textos."""
 import datetime as dt
+import hashlib
 import json
 import time
 
@@ -26,7 +27,7 @@ def _chunks(seq, n):
 
 UPSERT = """INSERT INTO jobs (id, source, company, company_key, title, location, url, description, salary, regime, lang,
  area, level, years, yrs_phrase, elig, geo_ok, fit, ghost, priority, reason, risk, apply_type, status, status_ts,
- posted_ts, first_seen, last_seen, seen_count, dkey, desc_partial, origin)
+ posted_ts, first_seen, last_seen, seen_count, dkey, desc_partial, origin, h)
 VALUES ({vals})
 ON CONFLICT(id) DO UPDATE SET
  title=excluded.title, location=excluded.location, company=excluded.company, company_key=excluded.company_key,
@@ -39,14 +40,18 @@ ON CONFLICT(id) DO UPDATE SET
  risk=CASE WHEN jobs.status='listada' THEN jobs.risk ELSE excluded.risk END,
  apply_type=excluded.apply_type, posted_ts=COALESCE(jobs.posted_ts, excluded.posted_ts),
  last_seen=excluded.last_seen, seen_count=COALESCE(jobs.seen_count,0)+1, dkey=excluded.dkey, gone=0,
- desc_partial=excluded.desc_partial,
+ desc_partial=excluded.desc_partial, h=excluded.h,
  status=CASE WHEN jobs.status='expirada' THEN 'nova' ELSE jobs.status END,
  origin=CASE WHEN COALESCE(jobs.origin,'') LIKE '%v3%' THEN jobs.origin ELSE COALESCE(jobs.origin||'+','')||'v3' END"""
 
 COLS = ("id", "source", "company", "company_key", "title", "location", "url", "description", "salary", "regime", "lang",
         "area", "level", "years", "yrs_phrase", "elig", "geo_ok", "fit", "ghost", "priority", "reason", "risk",
         "apply_type", "status", "status_ts", "posted_ts", "first_seen", "last_seen", "seen_count", "dkey",
-        "desc_partial", "origin")
+        "desc_partial", "origin", "h")
+# campos que, se mudarem, justificam regravar a linha (o resto só atualiza last_seen 1x por dia)
+HASHED = ("title", "location", "company", "salary", "regime", "area", "level", "years", "elig", "fit", "ghost",
+          "priority", "reason", "risk", "apply_type", "dkey", "desc_partial")
+TOUCH_AFTER = 20 * 3600  # vaga igual só regrava last_seen se a última marca tem mais de 20h
 
 
 def _lang(j):
@@ -80,13 +85,42 @@ def score_jobs(jobs, cfg, now, weights, pretensao, contacts):
     return rows, by_source
 
 
-def upsert(db, rows):
-    db.exec_many(UPSERT.format(vals=", ".join(q(r.get(c)) for c in COLS)) for r in rows)
+def row_hash(r):
+    base = [r.get(c) for c in HASHED] + [len(r.get("description") or "") // 500]
+    return hashlib.sha1(json.dumps(base, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
+
+
+def upsert(db, rows, now=None):
+    """Grava só o que mudou. Linha nova: INSERT. Mudou algo relevante (ou estava expirada): UPSERT completo.
+    Igual: só last_seen, e no máximo 1x a cada 20h (D1 grátis = 100 mil gravações/dia)."""
+    now = now or time.time()
+    for r in rows:
+        r["h"] = row_hash(r)
+    have = {}
+    for ch in _chunks([r["id"] for r in rows], 400):
+        for x in db.query("SELECT id, h, last_seen, status FROM jobs WHERE id IN %s" % in_list(ch)):
+            have[x["id"]] = x
+    full, touch = [], []
+    for r in rows:
+        old = have.get(r["id"])
+        if not old or old["h"] != r["h"] or old["status"] == "expirada":
+            full.append(r)
+        elif (old["last_seen"] or 0) < now - TOUCH_AFTER:
+            touch.append(r["id"])
+    db.exec_many(UPSERT.format(vals=", ".join(q(r.get(c)) for c in COLS)) for r in full)
+    for ch in _chunks(touch, 400):
+        db.exec_many(["UPDATE jobs SET last_seen=%s, gone=0 WHERE id IN %s" % (q(now), in_list(ch))])
+    return dict(novas=sum(1 for r in full if r["id"] not in have), mudaram=sum(1 for r in full if r["id"] in have),
+                vistas=len(touch), iguais=len(rows) - len(full) - len(touch))
 
 
 def update_health(db, res, by_source, now):
     st = []
+    fresh = {r["key"] for r in db.query("SELECT key FROM sources_health WHERE last_error IS NULL AND last_ok_ts >= ?",
+                                        [now - TOUCH_AFTER])}
     for key in res["ok_boards"]:
+        if key in fresh:
+            continue
         st.append("INSERT INTO sources_health(key,last_ok_ts,fail_streak,useful_count,disabled) VALUES (%s,%s,0,0,0) "
                   "ON CONFLICT(key) DO UPDATE SET last_ok_ts=excluded.last_ok_ts, fail_streak=0, last_error=NULL"
                   % (q(key), q(now)))
@@ -233,15 +267,16 @@ def run(db, cfg, do_collect=True, gem=None, force_list=False, now=None, collecto
         skip = {r["key"] for r in db.query("SELECT key FROM sources_health WHERE disabled = 1")}
         res = (collector or sources.collect)(cfg, skip=skip)
         rows, by_source = score_jobs(res["jobs"], cfg, now, weights, pretensao, contacts)
-        upsert(db, rows)
+        gravadas = upsert(db, rows, now)
         update_health(db, res, by_source, now)
         expire(db, res, rows, now)
         dups = dedupe(db, rows)
         summary.update(coletadas=res["raw_count"], nas_areas=len(res["jobs"]), aproveitadas=len(rows), duplicadas=dups,
                        por_fonte=res["counts"], erros=len(res["errors"]),
-                       fontes_com_erro=sorted(k for k in res["errors"] if ":" not in k))
+                       fontes_com_erro=sorted(k for k in res["errors"] if ":" not in k), banco=gravadas)
     summary["lista"] = prepare_list(db, now, gem, force_list, contacts)
     summary["segundos"] = int(time.time() - t0)
+    summary["d1_gravacoes"] = getattr(db, "rows_written", None)
     db.query("INSERT INTO runs(kind, started_ts, finished_ts, ok, summary) VALUES ('busca', ?, ?, 1, ?)",
              [now, time.time(), json.dumps(summary, ensure_ascii=False)])
     return summary

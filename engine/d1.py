@@ -28,6 +28,9 @@ def in_list(values):
 
 
 class _Base:
+    rows_written = 0
+    rows_read = 0
+
     def exec_many(self, statements):
         """Roda muitos statements literais, em pedaços de ~90 KB."""
         buf, size = [], 0
@@ -83,7 +86,12 @@ class D1(_Base):
                 # nunca imprime o SQL (pode ter dado pessoal)
                 errs = "; ".join(str(e.get("message", e))[:200] for e in d.get("errors") or [])
                 raise RuntimeError("D1 erro: %s" % (errs or r.status_code))
-            return d.get("result") or []
+            res = d.get("result") or []
+            for x in res:
+                m = x.get("meta") or {}
+                self.rows_written += int(m.get("rows_written") or 0)
+                self.rows_read += int(m.get("rows_read") or 0)
+            return res
         raise RuntimeError("D1 indisponível")
 
     def query(self, sql, params=None):
@@ -106,12 +114,19 @@ class LocalDB(_Base):
                     self.c.executescript(open(os.path.join(migrations, f), encoding="utf-8").read())
             self.c.commit()
 
+    def _count(self, before):
+        self.rows_written += self.c.total_changes - before
+
     def query(self, sql, params=None):
+        before = self.c.total_changes
         cur = self.c.execute(sql, list(params or []))
+        self._count(before)
         rows = [dict(r) for r in cur.fetchall()] if cur.description else []
         self.c.commit()
         return rows
 
     def _exec_script(self, sql):
+        before = self.c.total_changes
         self.c.executescript(sql)
         self.c.commit()
+        self._count(before)

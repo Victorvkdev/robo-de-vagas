@@ -5,6 +5,7 @@ workers_dev = true
 
 [vars]
 PANEL_URL = "https://robo-de-vagas-painel.pages.dev"
+GH_REPO = "Victorvkdev/robo-de-vagas"
 
 [[d1_databases]]
 binding = "DB"
@@ -12,9 +13,10 @@ database_name = "robo-de-vagas"
 database_id = "c607d58c-1550-4341-b749-c505ab72750b"
 migrations_dir = "migrations"
 
-# Lista diária: tenta às 8h, 8h30 … 11h30 (Fortaleza, UTC-3) até a busca das 6h ter montado a lista.
+# A cada 15 min: lembretes de entrevista (24h e 1h), fila do silêncio (sai às 7h) e,
+# das 8h às 11h59 (Fortaleza, UTC-3), a lista do dia assim que a busca das 6h terminar.
 [triggers]
-crons = ["0,30 11-14 * * *"]
+crons = ["*/15 * * * *"]
 
 [observability]
 enabled = true

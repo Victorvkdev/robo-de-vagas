@@ -20,6 +20,17 @@ import {
   setStatus,
   todayList,
 } from "./lib/lista";
+import {
+  askClass,
+  cancelEdit,
+  cmdAgenda,
+  cmdRascunhos,
+  fixClass,
+  flushNotices,
+  maybeEdit,
+  outboxCallback,
+  reminders,
+} from "./lib/mail";
 import { fmtDate, getSetting, getStats, setSetting, topJobs } from "./lib/stats";
 
 export interface Env {
@@ -28,6 +39,8 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET: string;
   ALLOWED_CHAT_ID: string;
   PANEL_URL: string;
+  GH_REPO?: string;
+  GH_DISPATCH_TOKEN?: string;
 }
 
 interface TgMessage {
@@ -35,6 +48,7 @@ interface TgMessage {
   chat: { id: number };
   text?: string;
   reply_markup?: { inline_keyboard?: Keyboard };
+  reply_to_message?: { message_id: number };
 }
 interface TgUpdate {
   update_id: number;
@@ -45,17 +59,21 @@ interface TgUpdate {
 const COMMANDS = [
   { command: "lista", description: "Lista de hoje com botões" },
   { command: "aprovadas", description: "Aprovadas que faltam enviar" },
+  { command: "agenda", description: "Entrevistas e prazos de teste" },
+  { command: "rascunhos", description: "Respostas esperando seu Enviar" },
   { command: "status", description: "Os 4 números e a próxima entrevista" },
   { command: "painel", description: "Link do painel" },
   { command: "pausar", description: "Pausar o robô" },
   { command: "voltar", description: "Retomar o robô" },
 ];
-const COMMANDS_VERSION = "3";
+const COMMANDS_VERSION = "4";
 
 const HELP = [
   "<b>Robô de Vagas</b>",
   "/lista — lista de hoje com botões",
   "/aprovadas — aprovadas que faltam enviar (toque 📨 quando enviar)",
+  "/agenda — entrevistas e prazos de teste",
+  "/rascunhos — respostas de e-mail esperando ✉️ Enviar",
   "/status — os 4 números e a próxima entrevista",
   "/painel — link do painel",
   "/pausar e /voltar — pausa ou retoma o robô",
@@ -163,8 +181,43 @@ async function handleOk(env: Env, text: string): Promise<string | null> {
   return out.join("\n");
 }
 
+async function handleMailCallback(env: Env, cq: NonNullable<TgUpdate["callback_query"]>, parts: string[]) {
+  const answer = (text: string) => tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text });
+  const sendFn = (t: string, extra: Record<string, unknown> = {}) => send(env, t, extra);
+  const [action, a, b] = parts;
+  if (action === "ob") {
+    const res = await outboxCallback(env, sendFn, a, Number(b));
+    if (res.keyboard && cq.message) {
+      const kb = cq.message.reply_markup?.inline_keyboard ?? [];
+      // troca só a linha dos botões do rascunho; mantém "Classifiquei errado"
+      const rest = kb.filter((r) => !r.some((x) => x.callback_data.startsWith("ob:") || x.callback_data === "noop"));
+      await tg(env, "editMessageReplyMarkup", {
+        chat_id: cq.message.chat.id,
+        message_id: cq.message.message_id,
+        reply_markup: { inline_keyboard: [...res.keyboard, ...rest] },
+      });
+    }
+    return answer(res.answer);
+  }
+  if (action === "mc") return answer(await askClass(env, sendFn, a));
+  if (action === "mf") {
+    const msg = await fixClass(env, a, b);
+    if (cq.message) {
+      await tg(env, "editMessageText", {
+        chat_id: cq.message.chat.id,
+        message_id: cq.message.message_id,
+        text: "✅ " + msg,
+      });
+    }
+    return answer("Corrigido");
+  }
+  return answer("");
+}
+
 async function handleCallback(env: Env, cq: NonNullable<TgUpdate["callback_query"]>) {
-  const [action, id] = (cq.data ?? "").split(":");
+  const parts = (cq.data ?? "").split(":");
+  if (["ob", "mc", "mf"].includes(parts[0])) return handleMailCallback(env, cq, parts);
+  const [action, id] = parts;
   const answer = (text: string) => tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text });
   if (action === "noop" || !id) return answer("");
   const j = await getJob(env.DB, id);
@@ -213,9 +266,19 @@ async function handleCallback(env: Env, cq: NonNullable<TgUpdate["callback_query
   return answer(msg);
 }
 
-export async function handleCommand(env: Env, text: string): Promise<string | null> {
+export async function handleCommand(env: Env, text: string, replyTo?: number): Promise<string | null> {
   const cmd = text.trim().split(/\s+/)[0].toLowerCase().replace(/@.*$/, "");
+  const sendFn = (t: string, extra: Record<string, unknown> = {}) => send(env, t, extra);
+  if (cmd === "/cancelar") return cancelEdit(env);
+  const edited = await maybeEdit(env, text, replyTo);
+  if (edited) return edited;
   switch (cmd) {
+    case "/agenda":
+      await cmdAgenda(env, sendFn);
+      return null;
+    case "/rascunhos":
+      await cmdRascunhos(env, sendFn);
+      return null;
     case "/start":
     case "/ajuda":
     case "/help":
@@ -243,7 +306,21 @@ export async function handleCommand(env: Env, text: string): Promise<string | nu
   }
 }
 
-// ---------------------------------------------------------------- cron (8h–11h30, a cada 30 min)
+// ---------------------------------------------------------------- cron (a cada 15 min)
+// Sempre: lembretes de entrevista e fila do silêncio. Das 8h às 11h59: lista do dia (só sai uma vez).
+export async function tick(env: Env, now = Date.now()) {
+  const sendFn = (t: string, extra: Record<string, unknown> = {}) => send(env, t, extra);
+  await reminders(env, sendFn, now).catch((e) => console.error("reminders", (e as Error).message));
+  await flushNotices(env, sendFn, now).catch((e) => console.error("notices", (e as Error).message));
+  const h = localHour(now);
+  if (h >= 8 && h < 12) {
+    await dailyList(env, now).catch(async (e) => {
+      await setSetting(env.DB, "list_sent", "").catch(() => undefined);
+      console.error("dailyList", (e as Error).message);
+    });
+  }
+}
+
 export async function dailyList(env: Env, now = Date.now()) {
   if ((await getSetting(env.DB, "commands_v")) !== COMMANDS_VERSION) {
     await tg(env, "setMyCommands", { commands: COMMANDS });
@@ -285,7 +362,7 @@ export default {
         if (update.callback_query) {
           await handleCallback(env, update.callback_query);
         } else if (update.message?.text) {
-          const reply = await handleCommand(env, update.message.text);
+          const reply = await handleCommand(env, update.message.text, update.message.reply_to_message?.message_id);
           if (reply) await send(env, reply);
         }
       } catch (e) {
@@ -298,11 +375,6 @@ export default {
   },
 
   async scheduled(_ev: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(
-      dailyList(env).catch(async (e) => {
-        await setSetting(env.DB, "list_sent", "").catch(() => undefined);
-        console.error("dailyList", (e as Error).message);
-      })
-    );
+    ctx.waitUntil(tick(env));
   },
 };

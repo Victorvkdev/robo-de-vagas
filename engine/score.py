@@ -17,7 +17,7 @@ AREAS = [
     ("crm", r"\bcrm\b|lifecycle|gamifica|loyalty|retention|e-?mail (designer|developer|marketing)|email marketing|marketing automation|\bbraze\b"),
     ("uxui", r"\bux\b|\bui\b|user experience|experiencia do usuario|interaction design|design system|visual designer|digital designer|web designer ui|ux ?/ ?ui|ui ?/ ?ux"),
     ("frontend", r"front[ -]?end|desenvolvedor(a)? front|web developer|react (developer|engineer)|ui developer|javascript developer|desenvolvedor(a)? web"),
-    ("web", r"web designer|webflow|framer|no[- ]?code|low[- ]?code|wordpress|landing page|shopify (developer|designer)"),
+    ("web", r"web designer|webflow|framer|no[- ]?code|low[- ]?code|wordpress|landing page|shopify designer"),
     ("suporte_qa", r"\bqa\b|quality assurance|tester|test analyst|analista de (testes|qualidade)|technical support|suporte tecnico|support (engineer|specialist|analyst)|product op(s|erations)|implementation specialist|customer success engineer"),
 ]
 _AREAS = [(k, re.compile(p)) for k, p in AREAS]
@@ -31,7 +31,12 @@ EXCLUDE = re.compile(
     r"backend|back-end|data (scientist|engineer|analyst)|devops|sre|android|ios|java|\.net|php|ruby|golang|salesforce|sap|"
     r"architect|arquitet\w*|instructional|interior|fashion|industrial|mechanical|civil|hardware|teacher|professor|tutor|"
     r"sales|vendedor|recruiter|account executive|graphic designer|designer grafico|3d|illustrator|motion designer|"
-    r"packaging|textile|jewelry|landscape)\b")
+    r"packaging|textile|jewelry|landscape|artist|instrucional|learning experience|shopify developer|"
+    r"talent pool|talent community|banco de talentos|general application|open application|candidatura espontanea|"
+    r"evergreen)\b")
+# engenharia de software sem front/UI (ex.: "Software Engineer, CRM" é backend)
+SWE = re.compile(r"software (engineer|developer)|engenheir[oa] de software|desenvolvedor(a)? de software|full[- ]?stack")
+SWE_OK = re.compile(r"front|\bui\b|\bux\b|design|web|react")
 MANAGER = re.compile(r"\bmanager\b")
 HYBRID = re.compile(r"\b(hibrid\w*|hybrid|presencial|on-?site|in[- ]office)\b")
 REMOTE = re.compile(r"\b(remote|remoto|anywhere|work from home|wfh|distributed|telecommut\w*|fully remote|home based|trabalho remoto)\b")
@@ -71,6 +76,8 @@ def excluded(title):
     t = norm(title)
     if EXCLUDE.search(t):
         return True
+    if SWE.search(t) and not SWE_OK.search(t):
+        return True
     # "manager" só vale em CRM/lifecycle (CRM Manager, Lifecycle Manager)
     return bool(MANAGER.search(t)) and not re.search(r"crm|lifecycle|retention|e-?mail", t)
 
@@ -88,6 +95,11 @@ def eligibility(job, cfg):
     desc = norm((job.get("description") or "")[:3000])
     if HYBRID.search(loc + " " + title):
         return "presencial"
+    if job.get("source") == "linkedin":
+        # LinkedIn público: "Cidade, Estado, Brazil (remoto)" sem confirmação de remoto no título = presencial
+        raw = re.sub(r"\(remoto\)", "", loc).strip()
+        if "," in raw and not REMOTE.search(title):
+            return "presencial"
     ok, blk = _rx_terms(g.get("ok_terms")), _rx_terms(g.get("block_terms"))
     if blk and blk.search(loc):
         return "bloqueada"
