@@ -5,4 +5,4 @@ compatibility_date = "2026-11-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "robo-de-vagas"
-database_id = "__D1_ID__"
+database_id = "c607d58c-1550-4341-b749-c505ab72750b"
