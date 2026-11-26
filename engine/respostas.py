@@ -217,7 +217,7 @@ class Respostas:
             v = {"YES": ("Sim", "Yes"), "NO": ("Não", "No")}[key][self.lang == "en"]
         elif key == "CURSAL":  # salário atual/último: só se for obrigatório (R$ 5.000 + benefícios)
             if not self.required:
-                v = self.dado("SENS.salario_atual")
+                v = "Prefiro não informar" if self.lang == "pt" else "Prefer not to disclose"
             elif re.search(r"numeric|numerico|somente (o )?numero|only (the )?number|apenas (o )?valor", lab):
                 v = "5000"
             else:

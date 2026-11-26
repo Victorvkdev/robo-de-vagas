@@ -152,26 +152,30 @@ def _resolve_form_page(page, url):
 
 
 def _pick_suggestion(page, loc, value):
-    """Campo de cidade com sugestões: se aparecer lista, digita só a cidade e clica na 1ª que cita a cidade."""
+    """Campo de cidade com autocomplete (Lever, Greenhouse): digita a cidade tecla a tecla e clica na sugestão."""
     city = value.split(",")[0].strip()
-    page.wait_for_timeout(1200)
-    sel = "[role=option], .dropdown-results div, .pac-item, li[class*=result], div[class*=suggestion], li[class*=option]"
-    if not page.locator(sel).first.is_visible():
-        return
-    loc.fill("")
-    loc.type(city, delay=40)
-    page.wait_for_timeout(1500)
-    for el in page.locator(sel).all()[:8]:
-        try:
+    sel = ("[role=option], .dropdown-results div, .dropdown-location, .pac-item, li[class*=result], "
+           "div[class*=suggestion], li[class*=option], ul[class*=dropdown] li")
+    try:
+        loc.fill("")
+        loc.type(city, delay=60)
+        page.wait_for_timeout(2500)
+        for el in page.locator(sel).all()[:10]:
             if el.is_visible() and city.lower() in (el.inner_text() or "").lower():
                 el.click(timeout=3000)
-                return
+                page.wait_for_timeout(500)
+                break
+        else:
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(500)
+        if not (loc.input_value() or "").strip():  # sem sugestão: volta o texto completo
+            loc.fill(value)
+    except Exception:  # noqa: BLE001
+        try:
+            loc.fill(value)
         except Exception:  # noqa: BLE001
             pass
-    try:
-        page.locator(sel).first.click(timeout=3000)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def _fill_combobox(page, loc, value):
@@ -270,10 +274,8 @@ def fill_form(page, resp, cv_path, cover_path=None):
                 if f["kind"] == "checkbox" and len(f["options"]) == 1:
                     # checkbox único: só marca consentimento/termos (resposta "Sim")
                     if v and pick_option(v, ["Yes", "Sim"]):
-                        if _check(page, f, consent=True):
-                            filled += 1
-                        elif f["required"]:
-                            missing.append(f["label"])
+                        _check(page, f, consent=True)
+                        filled += 1
                     elif f["required"]:
                         missing.append(f["label"])
                     continue
@@ -282,11 +284,9 @@ def fill_form(page, resp, cv_path, cover_path=None):
                     idx = [i for i, o in enumerate(f["options"])
                            if re.search(r"concordo|agree|aceito|accept|autorizo|consinto|consent|li e|i have read", norm(o))]
                     if idx:
-                        ok = [_check(page, f, i, f["options"][i], consent=True) for i in idx]
-                        if all(ok):
-                            filled += 1
-                        elif f["required"]:
-                            missing.append(f["label"])
+                        for i in idx:
+                            _check(page, f, i, f["options"][i] or f["label"], consent=True)
+                        filled += 1
                         continue
                 opt = pick_option(v, f["options"]) if v not in (None, SKIP) else None
                 if opt:
