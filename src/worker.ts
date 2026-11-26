@@ -25,7 +25,9 @@ import {
   cancelEdit,
   cmdAgenda,
   cmdRascunhos,
+  cmdPendencias,
   cmdRetornos,
+  doneCallback,
   dispatchWorkflow,
   fixClass,
   flushNotices,
@@ -63,6 +65,7 @@ const COMMANDS = [
   { command: "lista", description: "Lista de hoje com botões" },
   { command: "aprovadas", description: "Aprovadas que faltam enviar" },
   { command: "pacote", description: "Arquivo com as aprovadas para o chat do Sonnet" },
+  { command: "pendencias", description: "Vídeo, questionário, teste: o que falta fazer" },
   { command: "agenda", description: "Entrevistas e prazos de teste" },
   { command: "rascunhos", description: "Respostas esperando seu Enviar" },
   { command: "retornos", description: "Retornos das candidaturas (e-mail)" },
@@ -71,7 +74,7 @@ const COMMANDS = [
   { command: "pausar", description: "Pausar o robô" },
   { command: "voltar", description: "Retomar o robô" },
 ];
-const COMMANDS_VERSION = "6";
+const COMMANDS_VERSION = "7";
 
 const HELP = [
   "<b>Robô de Vagas</b>",
@@ -79,6 +82,7 @@ const HELP = [
   "/aprovadas — aprovadas que faltam enviar (toque 📨 quando enviar)",
   "/pacote — arquivo com todas as aprovadas para colar no chat do Sonnet",
   "enviei 1 3 5 — marca como enviadas (números do pacote)",
+  "/pendencias — vídeo, questionário, completar candidatura, teste (com ✅ Feito)",
   "/agenda — entrevistas e prazos de teste",
   "/rascunhos — respostas de e-mail esperando ✉️ Enviar",
   "/retornos — recusas, testes, entrevistas e confirmações dos últimos 30 dias",
@@ -228,6 +232,22 @@ async function handleMailCallback(env: Env, cq: NonNullable<TgUpdate["callback_q
 async function handleCallback(env: Env, cq: NonNullable<TgUpdate["callback_query"]>) {
   const parts = (cq.data ?? "").split(":");
   if (["ob", "mc", "mf"].includes(parts[0])) return handleMailCallback(env, cq, parts);
+  if (parts[0] === "pd") {
+    const msg = await doneCallback(env, parts[1]);
+    const kb = cq.message?.reply_markup?.inline_keyboard;
+    if (cq.message && kb) {
+      await tg(env, "editMessageReplyMarkup", {
+        chat_id: cq.message.chat.id,
+        message_id: cq.message.message_id,
+        reply_markup: {
+          inline_keyboard: kb.map((r) =>
+            r.some((b) => b.callback_data === cq.data) ? [{ text: "✅ feito", callback_data: "noop" }] : r
+          ),
+        },
+      });
+    }
+    return tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: msg });
+  }
   if (parts[0] === "pk") {
     await tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Gerando o pacote…" });
     return sendPacote(env, (t) => send(env, t));
@@ -293,6 +313,9 @@ export async function handleCommand(env: Env, text: string, replyTo?: number): P
       return null;
     case "/rascunhos":
       await cmdRascunhos(env, sendFn);
+      return null;
+    case "/pendencias":
+      await cmdPendencias(env, sendFn);
       return null;
     case "/retornos":
       await cmdRetornos(env, sendFn);

@@ -29,6 +29,7 @@ export const CLASSES: [string, string][] = [
   ["entrevista", "📅 Entrevista"],
   ["agendar", "🗓 Marcar horário"],
   ["teste", "🧪 Teste"],
+  ["pendencia", "📝 Pendência"],
   ["recrutador", "💬 Recrutador"],
   ["recusa", "❌ Recusa"],
   ["recebida", "📥 Recebida"],
@@ -40,6 +41,7 @@ const STATUS_OF: Record<string, string> = {
   entrevista: "entrevista",
   agendar: "entrevista",
   teste: "teste",
+  pendencia: "em_analise",
   recusa: "recusada",
   recebida: "em_analise",
   oferta: "oferta",
@@ -231,13 +233,13 @@ export async function fixClass(env: MailEnv, eid: string, cls: string): Promise<
     db.prepare(`DELETE FROM events WHERE email_id = ? AND origin = 'v3-email'`).bind(eid),
   ];
   const status = STATUS_OF[cls];
-  if (["entrevista", "teste", "recusa", "recebida", "oferta"].includes(cls)) {
+  if (["entrevista", "teste", "pendencia", "recusa", "recebida", "oferta"].includes(cls)) {
     st.push(
       db
         .prepare(
           `INSERT INTO events (job_id, kind, ts, due_ts, link, note, email_id, origin, company) VALUES (?, ?, ?, ?, ?, ?, ?, 'v3-email', ?)`
         )
-        .bind(e.job_id, cls, e.ts, cls === "entrevista" || cls === "teste" ? e.due_ts : null, e.link, e.subject, eid, e.company)
+        .bind(e.job_id, cls, e.ts, ["entrevista", "teste", "pendencia"].includes(cls) ? e.due_ts : null, e.link, e.subject, eid, e.company)
     );
   }
   if (e.job_id && status) {
@@ -287,7 +289,57 @@ export async function reminders(env: MailEnv, send: Send, now = Date.now()): Pro
       n++;
     }
   }
+  // prazo de teste/pendência: aviso 1x, 24h antes (respeita o silêncio)
+  if (!quiet) {
+    const p = await env.DB.prepare(
+      `SELECT e.id, e.kind, e.due_ts, e.link, COALESCE(e.company, j.company) AS company
+         FROM events e LEFT JOIN jobs j ON j.id = e.job_id
+        WHERE e.kind IN ('teste','pendencia') AND COALESCE(e.done,0) = 0 AND COALESCE(e.r24,0) = 0 AND e.due_ts BETWEEN ? AND ?`
+    )
+      .bind(t, t + 24 * 3600)
+      .all<{ id: number; kind: string; due_ts: number; link: string | null; company: string | null }>();
+    for (const e of p.results) {
+      await send(
+        `⏳ Prazo ${fmtDate(e.due_ts)}: ${e.kind === "teste" ? "teste" : "pendência"} da <b>${esc(e.company || "?")}</b>` +
+          (e.link ? `\n${esc(e.link)}` : "") +
+          "\nJá fez? /pendencias"
+      );
+      await env.DB.prepare(`UPDATE events SET r24 = 1 WHERE id = ?`).bind(e.id).run();
+      n++;
+    }
+  }
   return n;
+}
+
+/** /pendencias: o que você precisa fazer (vídeo, questionário, completar candidatura, teste), com ✅ Feito. */
+export async function cmdPendencias(env: MailEnv, send: Send) {
+  const r = await env.DB.prepare(
+    `SELECT e.kind, e.due_ts, e.link, e.email_id, e.note, COALESCE(e.company, j.company) AS company
+       FROM events e LEFT JOIN jobs j ON j.id = e.job_id
+      WHERE e.kind IN ('pendencia','teste') AND COALESCE(e.done,0) = 0 AND e.ts >= ?
+        AND (e.due_ts IS NULL OR e.due_ts >= ?)
+      ORDER BY COALESCE(e.due_ts, 9e12), e.ts DESC LIMIT 15`
+  )
+    .bind(Date.now() / 1000 - 45 * 86400, Date.now() / 1000 - 86400)
+    .all<{ kind: string; due_ts: number | null; link: string | null; email_id: string; note: string | null; company: string | null }>();
+  if (!r.results.length) return send("Nenhuma pendência aberta. 👌");
+  const lines = r.results.map(
+    (e, i) =>
+      `${i + 1}. ${e.kind === "teste" ? "🧪" : "📝"} <b>${esc(e.company || "?")}</b> · ${e.due_ts ? "prazo " + fmtDate(e.due_ts) : "sem prazo"}` +
+      `\n   <i>${esc((e.note || "").slice(0, 70))}</i>` +
+      (e.link ? `\n   ${esc(e.link)}` : "")
+  );
+  const kb: Keyboard = r.results.map((e, i) => [
+    { text: `✅ ${i + 1} feito · ${(e.company || "").slice(0, 20)}`, callback_data: `pd:${e.email_id}` },
+  ]);
+  return send(["<b>Pendências</b>", ...lines].join("\n"), { reply_markup: { inline_keyboard: kb } });
+}
+
+export async function doneCallback(env: MailEnv, eid: string): Promise<string> {
+  const r = await env.DB.prepare(`UPDATE events SET done = 1 WHERE email_id = ? AND kind IN ('pendencia','teste')`)
+    .bind(eid)
+    .run();
+  return r.meta.changes ? "Marcado como feito" : "Já estava feito";
 }
 
 interface Notice {
@@ -332,14 +384,14 @@ export async function cmdAgenda(env: MailEnv, send: Send) {
   const r = await env.DB.prepare(
     `SELECT e.kind, e.due_ts, e.link, COALESCE(e.company, j.company) AS company, COALESCE(e.title, j.title) AS title
        FROM events e LEFT JOIN jobs j ON j.id = e.job_id
-      WHERE e.kind IN ('entrevista','teste') AND e.due_ts >= ? ORDER BY e.due_ts LIMIT 10`
+      WHERE e.kind IN ('entrevista','teste','pendencia') AND COALESCE(e.done,0) = 0 AND e.due_ts >= ? ORDER BY e.due_ts LIMIT 12`
   )
     .bind(t - 3600)
     .all<{ kind: string; due_ts: number; link: string | null; company: string | null; title: string | null }>();
-  if (!r.results.length) return send("Agenda vazia: nenhuma entrevista ou prazo de teste marcado.");
+  if (!r.results.length) return send("Agenda vazia: nenhuma entrevista, teste ou pendência com data.");
   const lines = r.results.map(
     (e) =>
-      `${e.kind === "entrevista" ? "📅" : "🧪"} ${fmtDate(e.due_ts)} · <b>${esc(e.company || "?")}</b>` +
+      `${e.kind === "entrevista" ? "📅" : e.kind === "teste" ? "🧪" : "📝"} ${fmtDate(e.due_ts)} · <b>${esc(e.company || "?")}</b>` +
       (e.title ? ` · ${esc(e.title.slice(0, 50))}` : "") +
       (e.link ? `\n${esc(e.link)}` : "")
   );
@@ -363,6 +415,7 @@ const ICON: Record<string, string> = {
   entrevista: "📅",
   agendar: "🗓",
   teste: "🧪",
+  pendencia: "📝",
   recrutador: "💬",
   recusa: "❌",
   recebida: "📥",

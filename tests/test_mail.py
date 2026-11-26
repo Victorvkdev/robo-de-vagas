@@ -316,3 +316,75 @@ class LinkedInExternoTest(unittest.TestCase):
         j = dict(source="linkedin", title="Product Designer", location="Curitiba, Paraná, Brazil (remoto)",
                  description="This is a fully remote position.")
         self.assertEqual(score.eligibility(j, CFG), "aberta")
+
+
+def raw_sent(to, subject, body, in_reply_to=None, date_ts=NOW - 300):
+    m = EmailMessage()
+    m["From"] = "Victor Cavalcante <hello@victorvk.com>"
+    m["To"] = to
+    m["Subject"] = subject
+    m["Message-ID"] = "<sent%s@victorvk.com>" % abs(hash(subject + to))
+    m["Date"] = dt.datetime.fromtimestamp(date_ts, dt.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    if in_reply_to:
+        m["In-Reply-To"] = in_reply_to
+        m["References"] = in_reply_to
+    m.set_content(body)
+    return m.as_bytes()
+
+
+class EnviadosPendenciasTest(unittest.TestCase):
+    def box(self, msgs):
+        return lambda state, now: ([("INBOX", i + 1, r, False) for i, r in enumerate(msgs)], {"INBOX": {"v": 1, "u": 9}})
+
+    def test_already_replied_no_draft(self):
+        db = db_with_jobs()
+        db.set_setting("mail_state", '{"INBOX": {"v": 1, "u": 0}}')
+        q = raw("Iveth <iveth@puzzle.tech>", "Next steps", "Hi Victor, what times work for an interview?",
+                msgid="<pz1@puzzle>", date_ts=NOW - 3600)
+        ans = raw_sent("iveth@puzzle.tech", "Re: Next steps", "Tuesday 10am works.", in_reply_to="<pz1@puzzle>")
+        tg = FakeTG()
+        out = mail.run(db, tg, None, now=NOW, mailbox=self.box([q, ans]), smtp=FakeSMTP())
+        self.assertEqual(db.query("SELECT COUNT(*) AS n FROM outbox")[0]["n"], 0)
+        self.assertEqual(out["emails"].get("ja_respondidos"), 1)
+
+    def test_close_pending_draft(self):
+        db = db_with_jobs()
+        db.set_setting("mail_state", '{"INBOX": {"v": 1, "u": 0}}')
+        q = raw("Rita <rita@acme.com>", "Pergunta", "Olá Victor, qual sua pretensão para a vaga?", msgid="<r1@acme>",
+                date_ts=NOW - 3600)
+        mail.run(db, FakeTG(), None, now=NOW - 1800, mailbox=self.box([q]), smtp=FakeSMTP())
+        self.assertEqual(db.query("SELECT state FROM outbox")[0]["state"], "aguardando")
+        ans = raw_sent("rita@acme.com", "Re: Pergunta", "R$ 6.000 PJ.", in_reply_to="<r1@acme>", date_ts=NOW - 600)
+        tg = FakeTG()
+        out = mail.run(db, tg, None, now=NOW, mailbox=self.box([ans]), smtp=FakeSMTP())
+        self.assertEqual(out["ja_respondidos"], 1)
+        self.assertEqual(db.query("SELECT state FROM outbox")[0]["state"], "respondido")
+        self.assertTrue(any("já respondeu" in s["text"] for s in tg.sent))
+
+    def test_pendencia(self):
+        db = db_with_jobs()
+        db.set_setting("mail_state", '{"INBOX": {"v": 1, "u": 0}}')
+        q = raw("Wise Recruiting <no-reply@hirevue.com>", "Next step: record your video interview",
+                "Hi Victor, please record a short video introduction for the Product Designer role at Wise "
+                "by December 4. Start here: https://app.hirevue.com/interviews/abc123 . Unsubscribe: https://x.com/unsubscribe")
+        tg = FakeTG()
+        mail.run(db, tg, None, now=NOW, mailbox=self.box([q]), smtp=FakeSMTP())
+        ev = db.query("SELECT * FROM events WHERE kind='pendencia'")
+        self.assertEqual(len(ev), 1)
+        self.assertEqual(mail.fmt_local(ev[0]["due_ts"]), "sex, 04/12 às 23h59")
+        self.assertIn("hirevue.com/interviews/abc123", ev[0]["link"])
+        self.assertEqual(ev[0]["job_id"], "w1")
+        msg = [s for s in tg.sent if "Pendência" in s["text"]][0]
+        self.assertIn("gravar vídeo", msg["text"])
+        self.assertEqual(msg["keyboard"][0][0]["callback_data"], "pd:" + ev[0]["email_id"])
+        c = lambda *a: mail.classify(parsed(*a), [], now=NOW)[0]  # noqa: E731
+        self.assertEqual(c("Gupy <noreply@gupy.io>", "Complete sua candidatura", "Falta responder o questionário da vaga."),
+                         "pendencia")
+
+    def test_folders_include_sent(self):
+        class M:
+            def list(self):
+                return "OK", [b'(\\HasNoChildren) "/" "INBOX"', b'(\\HasNoChildren) "/" "Notification"',
+                              b'(\\HasNoChildren \\Sent) "/" "Sent"', b'(\\HasNoChildren \\Drafts) "/" "Drafts"',
+                              b'(\\HasNoChildren \\Trash) "/" "Trash"', b'(\\HasNoChildren) "/" "Spam"']
+        self.assertEqual(mail._folders(M()), (["INBOX", "Notification", "Sent", "Spam"], "Sent"))

@@ -52,6 +52,15 @@ PAD_RECEBIDA = (r"thank you for (applying|your application|your interest)|applic
                 r"recebemos (a |sua )?candidatura|candidatura (recebida|enviada|realizada)|"
                 r"obrigad[oa] por (se candidatar|sua candidatura|aplicar)|we.ve received your application|"
                 r"thanks for applying")
+PAD_PENDENCIA = (r"complete (your|the) (application|profile|candidacy|questionnaire|form|registration)|finish your application|"
+                 r"incomplete application|application (is )?incomplete|candidatura (incompleta|pendente)|"
+                 r"(complete|finalize|conclua|termine) (a |sua )?(candidatura|inscricao|cadastro)|questionnaire|questionario|"
+                 r"survey to complete|formulario (de|para)|video (introdut|de apresenta|interview|introduction|pitch)|"
+                 r"record (a|your) (short )?(video|introduction)|grav(e|ar) (um )?video|one-?way (video|interview)|"
+                 r"hirevue|willo|spark ?hire|async(hronous)? (video|interview)|"
+                 r"next step.{0,60}(complete|fill|answer|record|upload)|proxima etapa.{0,80}(responder|preencher|gravar|completar|enviar)|"
+                 r"responda (o|ao|as|aos) (questionario|perguntas|formulario)|action required|acao necessaria")
+PAD_PRAZO = r"until|by|before|no later than|deadline|due|expires?|ate o dia|ate dia|ate|prazo|vence"
 PAD_OFERTA = r"offer letter|job offer|pleased to offer|happy to offer|proposta (de emprego|de trabalho|formal)|carta oferta"
 PAD_ORCAMENTO = (r"orcamento|freela|freelance|quote (for|request)|preciso de um (site|app|layout)|"
                  r"budget for (a|the|my) (project|website)|project inquiry|hire you for")
@@ -69,6 +78,7 @@ GENERIC_DOMAINS = {"gmail", "outlook", "hotmail", "yahoo", "icloud", "zoho", "gr
                    "linkedin", "jobsoid", "bamboohr", "breezy", "teamtailor", "pinpointhq", "rippling", "calendly",
                    "google", "mail", "email", "notifications", "talent", "careers", "jobs", "recruiting", "us", "eu"}
 STATUS_OF = {"entrevista": "entrevista", "agendar": "entrevista", "teste": "teste", "recusa": "recusada",
+             "pendencia": "em_analise",
              "recebida": "em_analise", "oferta": "oferta"}
 RANK = {"aprovada": 0, "precisa_voce": 0, "listada": 0, "nova": 0, "enviada": 1, "em_analise": 2, "teste": 3,
         "entrevista": 4, "oferta": 5}
@@ -178,10 +188,13 @@ def parse_message(raw, folder="INBOX"):
     text, cal = body_of(msg)
     clean = strip_quotes(text)
     subject = dec(msg.get("Subject"))
+    tos = " ".join(a.lower() for _, a in email.utils.getaddresses(
+        [dec(msg.get(h) or "") for h in ("To", "Cc")]) if a)
+    irt = (msg.get("In-Reply-To") or "").strip()
     return dict(msgid=msgid, eid=hashlib.sha1(msgid.encode()).hexdigest()[:16], subject=subject.strip(),
                 from_name=disp, from_addr=addr.lower(), reply_to=(rt or addr).lower(), ts=ts, text=clean,
                 full=text, ics=cal, refs=" ".join((msg.get("References") or "").split()[-10:]),
-                lang=lang_of(subject + "\n" + clean), folder=folder)
+                in_reply_to=irt, to=tos, lang=lang_of(subject + "\n" + clean), folder=folder)
 
 
 # ---------------------------------------------------------------- datas e fusos
@@ -286,6 +299,72 @@ def parse_when(text, cal="", now=None):
     return None, None, False
 
 
+_DL_RX = [
+    re.compile(r"\b(?P<d>\d{1,2})/(?P<m>\d{1,2})(?:/(?P<y>\d{2,4}))?\b"),
+    re.compile(r"\b(?P<mon>" + _MON + r")\s+(?P<d>\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(?P<y>\d{4}))?\b"),
+    re.compile(r"\b(?P<d>\d{1,2})(?:st|nd|rd|th)?\s+(?:de\s+)?(?P<mon>" + _MON + r")(?:\s+(?:de\s+)?(?P<y>\d{4}))?\b"),
+]
+
+
+def parse_deadline(text, now=None):
+    """Prazo de teste/pendência: data (com ou sem hora) logo depois de 'até', 'by', 'deadline'... Sem hora = 23h59."""
+    now = now or time.time()
+    t = norm(text or "")[:8000]
+    for m in re.finditer(r"\b(" + PAD_PRAZO + r")\b", t):
+        win = t[m.end():m.end() + 70]
+        ts, _, _ = parse_when(win, "", now)
+        if ts:
+            return ts
+        for rx in _DL_RX:
+            d = rx.search(win)
+            if not d:
+                continue
+            g = d.groupdict()
+            try:
+                day = int(g["d"])
+                mo = int(g["m"]) if g.get("m") else MESES[g["mon"][:3]]
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (1 <= mo <= 12 and 1 <= day <= 31):
+                continue
+            if g.get("y"):
+                y = int(g["y"]) + (2000 if len(g["y"]) == 2 else 0)
+                try:
+                    return dt.datetime(y, mo, day, 23, 59, tzinfo=LOCAL).timestamp()
+                except ValueError:
+                    continue
+            c = _next_year(day, mo, 23, 59, LOCAL, now)
+            if c:
+                return c.timestamp()
+    return None
+
+
+URL_RX = re.compile(r"https?://[^\s\"'<>)\]]+")
+ACTION_RX = re.compile(r"apply|application|candidat|form|video|assessment|questionn|questionar|survey|hirevue|willo|"
+                       r"sparkhire|gupy|typeform|forms\.gle|jotform|complete|continue|portal|career|vaga", re.I)
+NOT_ACTION_RX = re.compile(r"unsubscribe|descadastr|privacy|privacidade|preferences|terms|linkedin\.com/(in|company)|"
+                           r"facebook|twitter|instagram|youtube|\.(png|jpg|gif)", re.I)
+
+
+def action_link(text):
+    urls = [u.rstrip(".,;") for u in URL_RX.findall(text or "")]
+    for u in urls:
+        if ACTION_RX.search(u) and not NOT_ACTION_RX.search(u):
+            return u
+    return ""
+
+
+def pendencia_kind(text):
+    t = norm(text or "")
+    if re.search(r"video|hirevue|willo|spark ?hire|one-?way", t):
+        return "gravar vídeo"
+    if re.search(r"questionnaire|questionario|survey|formulario|perguntas", t):
+        return "responder questionário"
+    if re.search(r"complete|finalize|conclua|termine|incomplet|pendente", t):
+        return "completar a candidatura"
+    return "fazer a próxima etapa"
+
+
 def parse_iso(s):
     try:
         d = dt.datetime.fromisoformat(str(s).strip().replace("Z", "+00:00"))
@@ -341,6 +420,8 @@ def classify(m, rules, gem_budget=None, gem=None, now=None):
         return "recusa", "regra"
     if re.search(PAD_OFERTA, t):
         return "oferta", "regra"
+    if re.search(PAD_PENDENCIA, t) and not m["ics"] and not re.search(PAD_TESTE, norm(m["subject"])):
+        return "pendencia", "regra"
     interview = re.search(PAD_ENTREVISTA, t)
     if m["ics"] and (interview or re.search(PAD_VAGA, t) or LINK_REUNIAO.search(m["ics"])):
         return "entrevista", "regra"
@@ -535,6 +616,54 @@ class Ctx:
         self.jobs, self.apps = load_jobs(db, self.now)
         self.cal_link = db.setting("cal_link") or ""
         self.count = {}
+        self.sent = db.query("SELECT msgid, ts, to_addrs, subject_norm, refs FROM sent_mail WHERE ts >= ?",
+                             [self.now - 60 * DAY])
+
+
+def already_replied(ctx, msgid, to_addr, subject, after_ts):
+    """Você já respondeu pelo Zoho? (mesma thread ou mesmo destinatário + mesmo assunto depois do e-mail)"""
+    to_addr, subj = (to_addr or "").lower(), norm_subject(subject)
+    for s in ctx.sent:
+        if (s["ts"] or 0) < (after_ts or 0) - 60:
+            continue
+        if msgid and msgid in (s["refs"] or ""):
+            return True
+        if to_addr and to_addr in (s["to_addrs"] or "") and subj and subj == s["subject_norm"]:
+            return True
+    return False
+
+
+def wrote_to(ctx, to_addr, after_ts):
+    to_addr = (to_addr or "").lower()
+    return any(to_addr and to_addr in (s["to_addrs"] or "") and (s["ts"] or 0) >= after_ts for s in ctx.sent)
+
+
+def record_sent(ctx, m):
+    row = dict(msgid=m["msgid"], ts=m["ts"], to_addrs=m.get("to", ""), subject_norm=norm_subject(m["subject"]),
+               refs=(m.get("refs", "") + " " + m.get("in_reply_to", "")).strip()[-1500:])
+    if any(s["msgid"] == row["msgid"] for s in ctx.sent):
+        return
+    ctx.db.query("INSERT OR IGNORE INTO sent_mail (msgid, ts, to_addrs, subject_norm, refs) VALUES (?, ?, ?, ?, ?)",
+                 [row["msgid"], row["ts"], row["to_addrs"], row["subject_norm"], row["refs"]])
+    ctx.sent.append(row)
+    ctx.count["enviados_lidos"] = ctx.count.get("enviados_lidos", 0) + 1
+
+
+def close_replied(ctx):
+    """Rascunho esperando que você já respondeu direto no Zoho: sai da fila sem enviar nada."""
+    rows = ctx.db.query("SELECT o.id, o.to_addr, o.subject, o.in_reply_to, o.kind, o.created_ts, e.ts AS ets "
+                        "FROM outbox o LEFT JOIN emails e ON e.id = o.email_id WHERE o.state IN ('aguardando','erro')")
+    closed = []
+    for r in rows:
+        after = r["ets"] if r["kind"] != "followup" else r["created_ts"]
+        if already_replied(ctx, r["in_reply_to"], r["to_addr"], r["subject"], after or 0) or \
+                (r["kind"] == "followup" and wrote_to(ctx, r["to_addr"], r["created_ts"] or 0)):
+            ctx.db.query("UPDATE outbox SET state='respondido', updated_ts=? WHERE id=?", [ctx.now, r["id"]])
+            closed.append(r)
+    if closed:
+        ctx.n.add("✔️ Você já respondeu pelo Zoho, descartei %d rascunho(s): %s" % (
+            len(closed), ", ".join("#%d %s" % (r["id"], E(r["to_addr"] or "")) for r in closed[:6])))
+    return len(closed)
 
 
 def _set_job_status(ctx, job, status, st):
@@ -571,6 +700,9 @@ def _placeholder_job(ctx, m, cls, st):
 
 
 def make_draft(ctx, kind, m, job, cls_title):
+    if kind in ("resposta", "agendar") and already_replied(ctx, m["msgid"], m["reply_to"], m["subject"], m["ts"]):
+        ctx.count["ja_respondidos"] = ctx.count.get("ja_respondidos", 0) + 1
+        return None
     lang = m["lang"]
     body, note = build_draft(kind, m, lang, ctx.perfil, ctx.gem, ctx.budget, ctx.now, ctx.cal_link,
                              cargo=(job or {}).get("title") or "")
@@ -595,7 +727,7 @@ def process(ctx, m, cls, how):
         return
     recent = m["ts"] >= ctx.now - 2 * DAY and not ctx.first and not m.get("_first")
     job = match_job(ctx.jobs, m) if cls in STATUS_OF or cls in ("recrutador",) else None
-    if not job and cls in ("entrevista", "teste", "recusa", "oferta", "agendar", "recebida"):
+    if not job and cls in ("entrevista", "teste", "recusa", "oferta", "agendar", "recebida", "pendencia"):
         job = _placeholder_job(ctx, m, cls, st)
     comp = (job or {}).get("company") or company_from(m)
     due, tzo, confirmed, link = None, None, False, ""
@@ -611,6 +743,13 @@ def process(ctx, m, cls, how):
             confirmed = bool(due)
         lk = LINK_REUNIAO.search(m["ics"] + " " + m["text"])
         link = lk.group(0) if lk else ""
+        if cls == "teste":
+            if not due or due < ctx.now:
+                due = parse_deadline(m["text"], ctx.now) or due
+            link = link or action_link(m["full"])
+    if cls == "pendencia":
+        due = parse_deadline(m["text"], ctx.now)
+        link = action_link(m["full"])
     st.append("INSERT OR IGNORE INTO emails (id, ts, from_addr, subject, snippet, class, company, job_id, thread_ref, "
               "msgid, refs, reply_to, lang, due_ts, link) VALUES (%s)" % ", ".join(q(v) for v in (
                   m["eid"], m["ts"], m["from_addr"], m["subject"][:200], re.sub(r"\s+", " ", m["text"])[:1200], cls,
@@ -618,7 +757,7 @@ def process(ctx, m, cls, how):
                   m["lang"], due, link)))
     if job and cls in STATUS_OF:
         _set_job_status(ctx, job, STATUS_OF[cls], st)
-    if cls in ("entrevista", "teste", "recusa", "recebida", "oferta"):
+    if cls in ("entrevista", "teste", "recusa", "recebida", "oferta", "pendencia"):
         kind = {"recusa": "recusa", "recebida": "recebida"}.get(cls, cls)
         st.append("INSERT INTO events (job_id, kind, ts, due_ts, link, note, email_id, origin, company, title) VALUES "
                   "(%s, %s, %s, %s, %s, %s, %s, 'v3-email', %s, %s)" % (
@@ -655,8 +794,14 @@ def process(ctx, m, cls, how):
     elif cls == "recrutador":
         make_draft(ctx, "resposta", m, job, "💬 <b>%s escreveu e espera resposta</b>" % title)
     elif cls == "teste":
-        ctx.n.add("🧪 <b>Teste: %s</b>\nPrazo: %s\n<i>%s</i>" % (
-            title, fmt_local(due) if due else "veja o e-mail", E(m["subject"][:120])), kb_wrong(m["eid"]))
+        ctx.n.add("🧪 <b>Teste: %s</b>\nPrazo: %s%s\n<i>%s</i>" % (
+            title, fmt_local(due) if due else "veja o e-mail", ("\n" + E(link)) if link else "", E(m["subject"][:120])),
+            [[{"text": "✅ Feito", "callback_data": "pd:%s" % m["eid"]}], kb_wrong(m["eid"])[0]])
+    elif cls == "pendencia":
+        ctx.n.add("📝 <b>Pendência: %s</b>\nO que fazer: %s\nPrazo: %s%s\n<i>%s</i>" % (
+            title, pendencia_kind(m["subject"] + " " + m["text"]), fmt_local(due) if due else "veja o e-mail",
+            ("\n" + E(link)) if link else "", E(m["subject"][:120])),
+            [[{"text": "✅ Feito", "callback_data": "pd:%s" % m["eid"]}], kb_wrong(m["eid"])[0]])
     elif cls == "oferta":
         ctx.n.add("🎉 <b>Proposta: %s</b>\n<i>%s</i>" % (title, E(m["subject"][:120])), kb_wrong(m["eid"]), urgent=True)
     elif cls == "orcamento":
@@ -668,6 +813,9 @@ def handle_messages(ctx, msgs):
     seen = {r["id"] for r in ctx.db.query("SELECT id FROM emails WHERE id IN %s" % in_list([m["eid"] for m in msgs]))} \
         if msgs else set()
     me = (os.environ.get("ZOHO_USER") or "hello@victorvk.com").lower()
+    for m in msgs:  # o que você enviou (pasta Enviados) entra antes, para não rascunhar o que já foi respondido
+        if m["from_addr"] == me:
+            record_sent(ctx, m)
     for m in sorted(msgs, key=lambda x: x["ts"]):
         if m["eid"] in seen or m["from_addr"] == me:
             continue
@@ -687,9 +835,9 @@ def redo_corrected(ctx):
                  text=r["snippet"] or "", refs=r["refs"] or "", lang=r["lang"] or "en", ts=r["ts"], ics="")
         job = next((j for j in ctx.jobs if j["id"] == r["job_id"]), None)
         kind = "agendar" if r["class"] == "agendar" else "resposta"
+        ctx.db.query("UPDATE emails SET redo = 0 WHERE id = ?", [r["id"]])
         make_draft(ctx, kind, m, job, ("🗓 <b>%s quer marcar entrevista</b>" if kind == "agendar"
                                        else "💬 <b>%s espera resposta</b>") % E(r["company"] or "?"))
-        ctx.db.query("UPDATE emails SET redo = 0 WHERE id = ?", [r["id"]])
     return len(rows)
 
 
@@ -722,6 +870,8 @@ def followups(ctx):
         if not em:
             continue
         e = em[0]
+        if wrote_to(ctx, e["reply_to"] or e["from_addr"], a["ts"]):
+            continue
         m = dict(eid=e["id"], msgid=e["msgid"] or "", subject=e["subject"] or a["title"] or "", from_name="",
                  from_addr=e["from_addr"], reply_to=e["reply_to"] or e["from_addr"], text="", refs=e["refs"] or "",
                  lang=e["lang"] or "en", ts=e["ts"], ics="")
@@ -759,7 +909,7 @@ SKIP_FOLDERS = re.compile(r"(?i)^(sent|enviados?|sent items|sent messages|drafts
 
 def _folders(M):
     """Todas as pastas que recebem e-mail (Inbox, Notification, Newsletter, Spam e as que você criar).
-    Fica de fora só Enviados, Rascunhos, Lixeira, Saída e Modelos."""
+    Enviados também (só para saber o que você já respondeu). Fica de fora Rascunhos, Lixeira, Saída e Modelos."""
     out, sent = ["INBOX"], None
     try:
         typ, lst = M.list()
@@ -770,7 +920,10 @@ def _folders(M):
             if not sent and (re.search(r"\\Sent", flags) or re.fullmatch(r"(?i)sent|enviados|sent items|sent messages",
                                                                           name)):
                 sent = name
-            if name.upper() == "INBOX" or re.search(r"\\(Sent|Drafts|Trash|Junk_no|Noselect)", flags, re.I):
+            if name == sent:  # Enviados: lido para saber o que você já respondeu
+                out.append(name)
+                continue
+            if name.upper() == "INBOX" or re.search(r"\\(Sent|Drafts|Trash|Noselect)", flags, re.I):
                 continue
             leaf = name.split("/")[-1]
             if SKIP_FOLDERS.match(leaf):
@@ -938,6 +1091,7 @@ def run(db, tg, gem=None, mode="ciclo", now=None, mailbox=None, smtp=None):
         msgs.append(m)
     ctx = Ctx(db, notifier, gem, now, perfil, first=first_ever)
     out["emails"] = dict(lidos=len(msgs), **handle_messages(ctx, msgs))
+    out["ja_respondidos"] = close_replied(ctx)
     out["refeitos"] = redo_corrected(ctx)
     out.update(followups(ctx))
     if new_state != state:
