@@ -199,7 +199,7 @@ def cmd_envio(a):
         db.query("UPDATE jobs SET status='aprovada', status_ts=? WHERE status='enviando'", [time.time()])
         tg_send("⚠️ Envio automático falhou: %s\nAs vagas voltaram para o pacote (/pacote)." % html.escape(str(e)[:200]))
         return 1
-    out["r2"] = (r2.errors[-1] if r2 and r2.errors else "ok") if r2 else "sem"
+    out["r2"] = (r2.errors[-1] if r2.errors else "ok") if r2 else "sem"
     out["segundos"] = int(time.time() - t0)
     print(json.dumps(out, ensure_ascii=False))
     if out["vagas"]:
@@ -220,16 +220,37 @@ def cmd_envio(a):
     return 0
 
 
+class TelegramStore:
+    """Backup sem custo: o arquivo vai como documento para o chat do bot (limite de 50 MB do Telegram)."""
+    errors = []
+
+    def put(self, key, data, ctype=""):
+        path = os.path.join(os.environ.get("RUNNER_TEMP") or "/tmp", os.path.basename(key))
+        with open(path, "wb") as f:
+            f.write(data)
+        if len(data) > 49_000_000:
+            self.errors.append("backup maior que 50 MB")
+            return None
+        ok = envio.tg_file(path, "💾 Backup semanal do banco (guarde se quiser; o Telegram mantém o histórico)",
+                           "application/gzip")
+        if not ok:
+            self.errors.append("Telegram recusou")
+        return key if ok else None
+
+    def list(self, prefix):
+        return []
+
+    def delete(self, key):
+        return True
+
+
 def cmd_backup(a):
     db = get_db(a.local)
-    r2 = R2.from_env()
-    if not r2:
-        print("backup: sem credenciais do Cloudflare")
-        return 1
+    r2 = R2.from_env() or TelegramStore()
     out = envio.backup(db, r2)
     print(json.dumps(out))
     if not out["key"]:
-        tg_send("⚠️ Backup semanal do banco falhou (R2: %s). Confira a permissão R2 do token." % html.escape(str(out["erro"])))
+        tg_send("⚠️ Backup semanal do banco falhou: %s" % html.escape(str(out["erro"])))
         return 1
     return 0
 

@@ -13,9 +13,8 @@ step() { printf "\n\033[1m▶ %s\033[0m\n" "$*"; }
 step "1/6 Dependências"
 npm install --silent && ok "npm ok"
 
-step "2/6 Bucket R2 privado (CVs, comprovantes e backup)"
-if $WR r2 bucket list 2>/dev/null | grep -q "robo-de-vagas"; then ok "bucket já existe"
-else $WR r2 bucket create robo-de-vagas >/dev/null && ok "bucket criado"; fi
+step "2/6 R2 desligado (pede cartão): CV, print e backup ficam no Telegram"
+ok "sem custo"
 
 step "3/6 Migração 0007 (modo ensaio, nota mínima 75, até 10/dia às 11h)"
 $WR d1 migrations apply "$DB" --remote >/dev/null && ok "migração aplicada"

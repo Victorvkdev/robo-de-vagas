@@ -17,6 +17,9 @@ class R2:
 
     @classmethod
     def from_env(cls, bucket=None):
+        # desligado por padrão: o R2 pede cartão. Só liga com o secret R2_ENABLED=1.
+        if os.environ.get("R2_ENABLED") != "1":
+            return None
         a, t = os.environ.get("CLOUDFLARE_ACCOUNT_ID"), os.environ.get("CLOUDFLARE_API_TOKEN")
         b = bucket or os.environ.get("R2_BUCKET") or "robo-de-vagas"
         return cls(a, t, b) if a and t else None
