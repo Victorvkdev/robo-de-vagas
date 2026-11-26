@@ -151,6 +151,29 @@ def _resolve_form_page(page, url):
         raise Abort("pede login/conta")
 
 
+def _pick_suggestion(page, loc, value):
+    """Campo de cidade com sugestões: se aparecer lista, digita só a cidade e clica na 1ª que cita a cidade."""
+    city = value.split(",")[0].strip()
+    page.wait_for_timeout(1200)
+    sel = "[role=option], .dropdown-results div, .pac-item, li[class*=result], div[class*=suggestion], li[class*=option]"
+    if not page.locator(sel).first.is_visible():
+        return
+    loc.fill("")
+    loc.type(city, delay=40)
+    page.wait_for_timeout(1500)
+    for el in page.locator(sel).all()[:8]:
+        try:
+            if el.is_visible() and city.lower() in (el.inner_text() or "").lower():
+                el.click(timeout=3000)
+                return
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        page.locator(sel).first.click(timeout=3000)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _fill_combobox(page, loc, value):
     loc.click(timeout=5000)
     loc.fill("")
@@ -164,7 +187,7 @@ def _fill_combobox(page, loc, value):
     page.wait_for_timeout(300)
 
 
-def _check(page, f, j=0, text=None):
+def _check(page, f, j=0, text=None, consent=False):
     """Marca checkbox/radio: clique normal, depois clique no texto, depois JS. True se ficou marcado."""
     loc = page.locator('[data-robo-opt="%s_%d"]' % (f["key"], j)).first
     text = (text or f["label"])[:60]
@@ -172,12 +195,14 @@ def _check(page, f, j=0, text=None):
              lambda: page.get_by_text(text, exact=False).first.click(timeout=4000),
              lambda: loc.evaluate("e => { e.checked = true; e.dispatchEvent(new Event('input', {bubbles: true}));"
                                   " e.dispatchEvent(new Event('change', {bubbles: true})); }"))
-    for t in tries:
+    for n, t in enumerate(tries):
         try:
             if loc.is_checked():
                 return True
             t()
             page.wait_for_timeout(300)
+            if n == 1 and consent:
+                return True
         except Exception:  # noqa: BLE001
             continue
     try:
@@ -209,7 +234,7 @@ def fill_form(page, resp, cv_path, cover_path=None):
             if f["kind"] in ("text", "email", "tel", "url", "number", "textarea", "input", "combobox", "date"):
                 if f["value"].strip():
                     continue
-                v = resp.answer(f["label"] or f["name"], "textarea" if f["kind"] == "textarea" else "text")
+                v = resp.answer(f["label"] or f["name"], "textarea" if f["kind"] == "textarea" else "text", required=f["required"])
                 if v == KIT:
                     raise Abort("pergunta que vira kit: %s" % f["label"][:80], [f["label"]])
                 if v == SKIP and f["required"]:  # empresa atual obrigatória: "Nenhuma (último: ...)"
@@ -225,9 +250,11 @@ def fill_form(page, resp, cv_path, cover_path=None):
                     _fill_combobox(page, loc, v)
                 else:
                     loc.fill(v, timeout=5000)
+                    if re.search(r"location|localizacao|cidade|city", lab):
+                        _pick_suggestion(page, loc, v)
                 filled += 1
             elif f["kind"] == "select":
-                v = resp.answer(f["label"] or f["name"], "select", f["options"])
+                v = resp.answer(f["label"] or f["name"], "select", f["options"], required=f["required"])
                 if v == KIT:
                     raise Abort("pergunta que vira kit: %s" % f["label"][:80], [f["label"]])
                 opt = pick_option(v, f["options"]) if v not in (None, SKIP) else None
@@ -237,13 +264,13 @@ def fill_form(page, resp, cv_path, cover_path=None):
                 elif f["required"]:
                     missing.append(f["label"])
             elif f["kind"] in ("radio", "checkbox"):
-                v = resp.answer(f["label"] or f["name"], f["kind"], f["options"])
+                v = resp.answer(f["label"] or f["name"], f["kind"], f["options"], required=f["required"])
                 if v == KIT:
                     raise Abort("pergunta que vira kit: %s" % f["label"][:80], [f["label"]])
                 if f["kind"] == "checkbox" and len(f["options"]) == 1:
                     # checkbox único: só marca consentimento/termos (resposta "Sim")
                     if v and pick_option(v, ["Yes", "Sim"]):
-                        if _check(page, f):
+                        if _check(page, f, consent=True):
                             filled += 1
                         elif f["required"]:
                             missing.append(f["label"])
@@ -255,7 +282,7 @@ def fill_form(page, resp, cv_path, cover_path=None):
                     idx = [i for i, o in enumerate(f["options"])
                            if re.search(r"concordo|agree|aceito|accept|autorizo|consinto|consent|li e|i have read", norm(o))]
                     if idx:
-                        ok = [_check(page, f, i, f["options"][i]) for i in idx]
+                        ok = [_check(page, f, i, f["options"][i], consent=True) for i in idx]
                         if all(ok):
                             filled += 1
                         elif f["required"]:

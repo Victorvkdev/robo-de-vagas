@@ -28,6 +28,7 @@ RULES = [
     (r"current (title|role|position)|cargo atual", "DADOS.cargo_atual"),
     (r"currently employed|empregado atualmente|esta trabalhando", "DADOS.empregado_agora"),
     (r"years of (relevant |professional )?experience|anos de experiencia|how many years", "DADOS.anos_experiencia_numero"),
+    (r"current salary|salario atual|ultimo salario|last salary|current or last|atual ou ultimo", "CURSAL"),
     (r"salary|compensation|pretensao|remuneracao|expected (pay|rate)|rate expectation|desired pay|hourly rate", "PRET"),
     (r"notice period|aviso previo", "DADOS.aviso_previo"),
     (r"presencial|on-?site|in-?office|hibrido|hybrid|trabalhar no escritorio", "PRESENCIAL"),
@@ -53,6 +54,7 @@ RULES = [
     (r"previously (worked|employed)|worked (for|at) .* before|ja trabalhou", "DADOS.ja_trabalhou_na_empresa"),
     (r"(applied|apply) .* before|ja se candidatou|previously applied", "DADOS.ja_aplicou_antes"),
     (r"18 years|over 18|maior de (idade|18)|legal age", "DADOS.maior_18"),
+    (r"(confortavel|comfortable).*(ingles|english)|(trabalha|work) (em|in) (ingles|english)", "YES"),
     (r"english|ingles", "IDI.ingles_dropdown"),
     (r"spanish|espanhol", "IDI.espanhol"),
     (r"portuguese|portugues", "IDI.portugues"),
@@ -65,7 +67,8 @@ RULES = [
     (r"gender|genero|sexo|pronoun|pronome", "DADOS.genero"),
     (r"race|ethnic|raca|etnia|hispanic|latino", "DADOS.raca_etnia"),
     (r"veteran|veterano", "DADOS.veterano"),
-    (r"disabilit|deficiencia|pcd", "DADOS.deficiencia"),
+    (r"tipo de deficiencia|qual deficiencia|type of disability|laudo", SKIP),
+    (r"disabilit|deficiencia|\bpcd\b", "NO"),
     (r"sexual orientation|orientacao sexual|lgbt", "DADOS.orientacao"),
     (r"degree|bachelor|bacharel|graduacao|education level|escolaridade", "FORM.nivel_maior"),
     (r"equipment|equipamento|computer|internet", "DADOS.equipamento"),
@@ -95,6 +98,7 @@ class Respostas:
         self.source_name = source_name
         self.log = []  # (rótulo, resposta, origem)
         self.deduced = 0
+        self.required = False
 
     # ------------------------------------------------------------ valores
     def dado(self, key):
@@ -179,8 +183,19 @@ class Respostas:
         return r[self.lang]
 
     # ------------------------------------------------------------ principal
-    def answer(self, label, kind="text", options=None):
-        """Texto da resposta, KIT, SKIP ou None (sem resposta aprovada)."""
+    def answer(self, label, kind="text", options=None, required=False):
+        """Texto da resposta, KIT, SKIP ou None. Pergunta em português recebe resposta em português."""
+        base = self.lang
+        self.required = required
+        if re.search(r"[ãõçê]|\b(voce|qual|seu|sua|como|possui|gostaria|caso)\b", norm(label) + " " + label.lower()) \
+                and not re.search(r"\b(what|your|you|are|do)\b", norm(label)):
+            self.lang = "pt"
+        try:
+            return self._answer(label, kind, options)
+        finally:
+            self.lang = base
+
+    def _answer(self, label, kind="text", options=None):
         lab = norm(label)
         if not lab:
             return None
@@ -198,6 +213,15 @@ class Respostas:
             v = key
         elif key == "PRET":
             v = self.pret(label)
+        elif key in ("YES", "NO"):
+            v = {"YES": ("Sim", "Yes"), "NO": ("Não", "No")}[key][self.lang == "en"]
+        elif key == "CURSAL":  # salário atual/último: só se for obrigatório (R$ 5.000 + benefícios)
+            if not self.required:
+                v = self.dado("SENS.salario_atual")
+            elif re.search(r"numeric|numerico|somente (o )?numero|only (the )?number|apenas (o )?valor", lab):
+                v = "5000"
+            else:
+                v = "R$ 5.000 + benefícios" if self.lang == "pt" else "R$ 5,000/month + benefits"
         elif key == "PRESENCIAL":  # só remoto, sem mudança (Teresina)
             v = "No" if self.lang == "en" and not re.search(r"[ãçõéê]", label) else "Não"
         elif key == "SOURCE":
@@ -275,10 +299,11 @@ def pick_option(answer, options):
                         and not re.search(r"nao|don.?t|do not|disagree", n):
                     return o
     decline = re.compile(r"decline|prefer not|nao (desejo|quero)|prefiro nao|don.?t wish|not to (say|answer|disclose)")
-    if decline.search(a):
+    if decline.search(a) or "self-identify" in a or "prefiro nao" in a:
         for o, n in opts:
-            if decline.search(n):
+            if decline.search(n) or re.search(r"prefiro nao|nao (quero|desejo) (informar|responder)|prefer not|decline", n):
                 return o
+        return None
     # número (anos): faixa que contém o valor
     m = re.match(r"^(\d+)", a)
     if m:
