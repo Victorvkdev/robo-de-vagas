@@ -240,6 +240,23 @@ class RunTest(unittest.TestCase):
         self.assertIn("UTC−3", db.query("SELECT body FROM outbox")[0]["body"])
 
 
+class ListaDuplicadaTest(unittest.TestCase):
+    def test_no_second_list_same_day(self):
+        db = LocalDB(":memory:", os.path.join(ROOT, "migrations"))
+        jobs = [dict(id="g%d" % i, source="greenhouse", company="Co%d" % i, title="Product Designer",
+                     location="Remote - Worldwide", url="https://x/%d" % i, description="Figma React. " * 60,
+                     salary="", posted_ts=NOW - 86400, desc_partial=False, regime="", lang=None) for i in range(12)]
+        fake = lambda cfg, skip=(): dict(jobs=jobs[:6], errors={}, ok_boards=set(), counts={}, raw_count=6)  # noqa
+        pipeline.run(db, CFG, now=NOW, collector=fake)
+        db.query("UPDATE jobs SET status='pulada' WHERE status='listada'")  # Vk analisou tudo
+        fake2 = lambda cfg, skip=(): dict(jobs=jobs, errors={}, ok_boards=set(), counts={}, raw_count=12)  # noqa
+        s = pipeline.run(db, CFG, now=NOW + 3600, collector=fake2)
+        self.assertEqual(s["lista"].get("skipped"), "lista de hoje já existe")
+        s = pipeline.run(db, CFG, now=NOW + 7200, collector=fake2, force_list=True)
+        pos = [r["list_pos"] for r in db.query("SELECT list_pos FROM jobs WHERE status='listada' ORDER BY list_pos")]
+        self.assertEqual(pos, list(range(7, 13)))
+
+
 class Entrega3AjustesTest(unittest.TestCase):
     def test_filters(self):
         for t in ("Learning Experience Designer", "Talent Pool - Product Designer", "Software Engineer, CRM",

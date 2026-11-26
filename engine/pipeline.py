@@ -202,8 +202,12 @@ def prepare_list(db, now, gem=None, force=False, contacts=None):
         db.query("UPDATE jobs SET status='nova', list_date=NULL, list_pos=NULL WHERE status='listada' AND list_date=?",
                  [today])
         db.set_setting("list_sent", "")
-    elif db.query("SELECT 1 AS x FROM jobs WHERE status='listada' AND list_date=? LIMIT 1", [today]):
+    elif db.query("SELECT 1 AS x FROM jobs WHERE list_date=? LIMIT 1", [today]):
+        # qualquer vaga com a data de hoje (mesmo já aprovada/pulada) = a lista de hoje já saiu
         return dict(listed=0, skipped="lista de hoje já existe")
+    # refazendo no mesmo dia: numera depois das que você já analisou (sem repetir 1, 2, 3…)
+    base = int((db.query("SELECT COALESCE(MAX(list_pos), 0) AS m FROM jobs WHERE list_date=?", [today])
+                or [{"m": 0}])[0]["m"] or 0)
 
     size = int(db.setting("list_size") or 40)
     max_co = int(db.setting("max_per_company_month") or 3)
@@ -245,7 +249,7 @@ def prepare_list(db, now, gem=None, force=False, contacts=None):
         n = notes.get(i) or {}
         st.append("UPDATE jobs SET status='listada', status_ts=%s, list_date=%s, list_pos=%d, summary=%s, reason=%s, "
                   "risk=%s, contact=%s WHERE id=%s" % (
-                      q(now), q(today), i, q(n.get("resumo") or ai.resumo_regra(c)),
+                      q(now), q(today), base + i, q(n.get("resumo") or ai.resumo_regra(c)),
                       q(n.get("motivo") or c["reason"]), q(_merge_risk(c["risk"], n.get("riscos"))),
                       q(contacts.get(c["company_key"] or "")), q(c["id"])))
     if st:
