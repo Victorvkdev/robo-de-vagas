@@ -93,14 +93,30 @@ FIELDS_JS = r"""
 
 
 def _visible_captcha(page):
+    """Só conta desafio que a pessoa veria (o hCaptcha invisível do Lever fica escondido e não bloqueia)."""
     for fr in page.locator(CAPTCHA_SEL).all():
         try:
+            if not fr.is_visible():
+                continue
             box = fr.bounding_box()
         except Exception:  # noqa: BLE001
-            box = None
-        if box and box["width"] > 40 and box["height"] > 40:
+            continue
+        if box and box["width"] > 60 and box["height"] > 60 and box["x"] >= 0 and box["y"] >= 0:
             return True
     return False
+
+
+def _close_cookies(page):
+    for sel in ("button:has-text('Deny')", "button:has-text('Reject')", "button:has-text('Recusar')",
+                "button:has-text('Accept')", "button:has-text('Aceitar')"):
+        loc = page.locator(sel).first
+        try:
+            if loc.count() and loc.is_visible():
+                loc.click(timeout=3000)
+                page.wait_for_timeout(500)
+                return
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _resolve_form_page(page, url):
@@ -174,6 +190,8 @@ def fill_form(page, resp, cv_path, cover_path=None):
                 v = resp.answer(f["label"] or f["name"], "textarea" if f["kind"] == "textarea" else "text")
                 if v == KIT:
                     raise Abort("pergunta que vira kit: %s" % f["label"][:80], [f["label"]])
+                if v == SKIP and f["required"]:  # empresa atual obrigatória: "Nenhuma (último: ...)"
+                    v = resp.dado("DADOS.empresa_atual")
                 if v in (None, SKIP):
                     if f["required"]:
                         missing.append(f["label"] or f["name"])
@@ -253,6 +271,7 @@ def run(browser, job, perfil, cv_path, mode="real", cover_path=None, learned=(),
         if "linkedin.com" in (job.get("url") or ""):
             raise Abort("LinkedIn nunca é enviado pelo robô")
         _resolve_form_page(page, apply_url(job["url"]))
+        _close_cookies(page)
         if _visible_captcha(page):
             raise Abort("captcha na página")
         total, missing = 0, []

@@ -24,7 +24,7 @@ RULES = [
     (r"behance|dribbble", "DADOS.behance"),
     (r"portfolio password|senha do portfolio", "DADOS.senha_portfolio"),
     (r"portfolio|portifolio|website|personal site|site pessoal|\burl\b|other link|link", "DADOS.portfolio"),
-    (r"current (company|employer)|empresa atual|most recent (company|employer)|^company$|^organization$", SKIP),
+    (r"current (company|employer)|company where you (currently )?work|empresa (em |onde )?(que )?(voce )?trabalha|empresa atual|most recent (company|employer)|^company$|^organization$", SKIP),
     (r"current (title|role|position)|cargo atual", "DADOS.cargo_atual"),
     (r"currently employed|empregado atualmente|esta trabalhando", "DADOS.empregado_agora"),
     (r"years of (relevant |professional )?experience|anos de experiencia|how many years", "DADOS.anos_experiencia_numero"),
@@ -42,7 +42,8 @@ RULES = [
     (r"overlap|work .*(hours|time ?zone)|any time ?zone|qualquer fuso", "DADOS.overlap_eua_europa"),
     (r"time ?zone|fuso", "DADOS.fuso"),
     (r"remote|remoto|hybrid|hibrido|on-?site|presencial|work model|modelo de trabalho", "DADOS.modelo_trabalho"),
-    (r"located in|where are you (based|located)|current location|country of residence|pais de residencia|^country|^pais",
+    (r"^current location|^localizacao atual", "DADOS.local_completo"),
+    (r"located in|where are you (based|located)|country of residence|pais de residencia|^country|^pais",
      "DADOS.pais"),
     (r"^location|^city|cidade|localizacao|where do you live|onde voce mora", "DADOS.local_completo"),
     (r"^state|^estado|province", "DADOS.estado"),
@@ -56,7 +57,7 @@ RULES = [
     (r"portuguese|portugues", "IDI.portugues"),
     (r"background check|verificacao de antecedentes", "SENS.consentimento_bg"),
     (r"non-?compete|nao concorrencia|exclusividade", "SENS.nao_concorrencia"),
-    (r"relative|family member|parente", "SENS.parente_empresa"),
+    (r"relative|family member|parente|familiar", "SENS.parente_empresa"),
     (r"conflict of interest|conflito de interesse", "SENS.conflito_interesse"),
     (r"privacy|privacidade|terms|termos|consent|consentimento|gdpr|data processing|acknowledge|i agree|concordo|"
      r"lgpd|retain my|keep my (data|information)|future (opportunities|roles)", "SENS.privacidade"),
@@ -116,15 +117,26 @@ class Respostas:
         v = self.p.d(key, self.lang)
         return v or None
 
-    def pret(self):
+    def pret(self, label=""):
+        lab = norm(label)
+        brl = re.search(r"r\$|\bclt\b|\bpj\b|\bbrl\b|reais", lab)
+        only_num = re.search(r"numeric|numerico|somente (o )?numero|only (the )?number|apenas (o )?valor", lab)
+        v = self._pret(brl, lab)
+        if v and only_num:
+            v = re.sub(r"[^\d]", "", v.split(",")[0] if "R$" in v else v.replace(",", ""))
+        return v
+
+    def _pret(self, brl, lab):
         level = (self.job.get("level") or "").lower()
         k = "PRET.jr" if level in ("junior", "jr", "entry") else "PRET.sr" if level in ("senior", "sr", "lead") else "PRET.pl"
         row = self.p.pret.get(k)
         if not row:
             return None
         # colunas: nível | CLT | PJ | US$/mês | US$/ano | US$/h
-        if self.lang == "pt":
-            return (row[2] if re.search(r"\bpj\b|cnpj", norm(self.job.get("description") or "")) else row[1]).strip()
+        if self.lang == "pt" or brl:
+            pj = re.search(r"\bpj\b|cnpj", lab) or (not re.search(r"\bclt\b", lab)
+                                                   and re.search(r"\bpj\b|cnpj", norm(self.job.get("description") or "")))
+            return (row[2] if pj else row[1]).strip()
         return row[3].strip() + "/month"
 
     def learned_for(self, label):
@@ -181,7 +193,7 @@ class Respostas:
         if key in (KIT, SKIP):
             v = key
         elif key == "PRET":
-            v = self.pret()
+            v = self.pret(label)
         elif key == "SOURCE":
             v = self.source_name or ("Company website" if self.lang == "en" else "Site da empresa")
         elif key == "AUTH_GENERIC":
