@@ -11,7 +11,7 @@ SKIP = "__SKIP__"   # deixa em branco (empresa atual, campo opcional sem dado)
 # (regex no rótulo normalizado, chave DADOS/IDI/especial). Ordem importa: o primeiro que casar vale.
 RULES = [
     (r"criminal|antecedente|convicted|felony", KIT),
-    (r"\bcpf\b|\brg\b|identidade|social security|\bssn\b|passport|passaporte|date of birth|birth ?date|"
+    (r"\bcpf\b|\brg\b|(carteira|documento|numero) (de |do |da )?identidade|social security|\bssn\b|passport|passaporte|date of birth|birth ?date|"
      r"data de nascimento|nascimento|home address|street address|endereco|\bcep\b|zip|postal code|bank", KIT),
     (r"first name|primeiro nome|^nome$|given name", "DADOS.primeiro_nome"),
     (r"last name|sobrenome|surname|family name", "DADOS.sobrenome"),
