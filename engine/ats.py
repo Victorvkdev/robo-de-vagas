@@ -164,11 +164,12 @@ def _fill_combobox(page, loc, value):
     page.wait_for_timeout(300)
 
 
-def _check(page, f):
-    """Marca checkbox de consentimento: clique normal, depois clique no texto, depois JS. True se ficou marcado."""
-    loc = page.locator('[data-robo-opt="%s_0"]' % f["key"]).first
+def _check(page, f, j=0, text=None):
+    """Marca checkbox/radio: clique normal, depois clique no texto, depois JS. True se ficou marcado."""
+    loc = page.locator('[data-robo-opt="%s_%d"]' % (f["key"], j)).first
+    text = (text or f["label"])[:60]
     tries = (lambda: loc.check(timeout=4000, force=True),
-             lambda: page.get_by_text(f["label"][:60], exact=False).first.click(timeout=4000),
+             lambda: page.get_by_text(text, exact=False).first.click(timeout=4000),
              lambda: loc.evaluate("e => { e.checked = true; e.dispatchEvent(new Event('input', {bubbles: true}));"
                                   " e.dispatchEvent(new Event('change', {bubbles: true})); }"))
     for t in tries:
@@ -249,11 +250,24 @@ def fill_form(page, resp, cv_path, cover_path=None):
                     elif f["required"]:
                         missing.append(f["label"])
                     continue
+                # grupo de checkboxes de consentimento (mesmo name): marca os que são "concordo/autorizo"
+                if f["kind"] == "checkbox" and v and pick_option(v, ["Yes", "Sim"]):
+                    idx = [i for i, o in enumerate(f["options"])
+                           if re.search(r"concordo|agree|aceito|accept|autorizo|consinto|consent|li e|i have read", norm(o))]
+                    if idx:
+                        ok = [_check(page, f, i, f["options"][i]) for i in idx]
+                        if all(ok):
+                            filled += 1
+                        elif f["required"]:
+                            missing.append(f["label"])
+                        continue
                 opt = pick_option(v, f["options"]) if v not in (None, SKIP) else None
                 if opt:
                     j = f["options"].index(opt)
-                    page.locator('[data-robo-opt="%s_%d"]' % (f["key"], j)).check(timeout=4000, force=True)
-                    filled += 1
+                    if _check(page, f, j, opt):
+                        filled += 1
+                    elif f["required"]:
+                        missing.append(f["label"])
                 elif f["required"]:
                     missing.append(f["label"])
         except Abort:
