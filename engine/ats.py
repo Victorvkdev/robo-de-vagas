@@ -220,8 +220,10 @@ def fill_form(page, resp, cv_path, cover_path=None):
                     raise Abort("pergunta que vira kit: %s" % f["label"][:80], [f["label"]])
                 if f["kind"] == "checkbox" and len(f["options"]) == 1:
                     # checkbox único: só marca consentimento/termos (resposta "Sim")
-                    if v and pick_option(v, ["Yes", "Sim"]) and not page.locator('[data-robo-opt="%s_0"]' % f["key"]).is_checked():
-                        page.locator('[data-robo-opt="%s_0"]' % f["key"]).check(timeout=4000, force=True)
+                    if v and pick_option(v, ["Yes", "Sim"]):
+                        page.locator('[data-robo-opt="%s_0"]' % f["key"]).evaluate(
+                            "e => { if (!e.checked) e.click(); if (!e.checked) { e.checked = true;"
+                            " e.dispatchEvent(new Event('change', {bubbles: true})); } }")
                         filled += 1
                     elif f["required"]:
                         missing.append(f["label"])

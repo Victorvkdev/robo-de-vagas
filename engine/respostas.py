@@ -147,6 +147,8 @@ class Respostas:
             if not qt or not t:
                 continue
             j = len(t & qt) / len(t | qt)
+            if len(qt) >= 3:  # pergunta ensinada mais curta, contida no rótulo do formulário
+                j = max(j, len(t & qt) / len(qt) - 0.15)
             if j > score:
                 best, score = a, j
         return best if score >= 0.6 else None
@@ -231,6 +233,11 @@ def pick_option(answer, options):
         for o, n in opts:
             if yes_no(o) == yn:
                 return o
+        if yn == "yes":  # consentimento: "Li e concordo", "I agree", "Aceito"
+            for o, n in opts:
+                if re.search(r"concordo|agree|aceito|accept|autorizo|consinto|li e|i have read|i consent", n) \
+                        and not re.search(r"nao|don.?t|do not|disagree", n):
+                    return o
     decline = re.compile(r"decline|prefer not|nao (desejo|quero)|prefiro nao|don.?t wish|not to (say|answer|disclose)")
     if decline.search(a):
         for o, n in opts:
@@ -246,6 +253,11 @@ def pick_option(answer, options):
                 return o
             if len(r) == 1 and ("+" in n or "more" in n or "mais" in n) and x >= int(r[0]):
                 return o
+    if re.search(r"website|site da empresa", a):  # "como soube da vaga"
+        for rx in (r"site|website|career|carreira|pagina|portal|empresa", r"outro|other|outra"):
+            for o, n in opts:
+                if re.search(rx, n):
+                    return o
     best, sc = None, 0.0
     at = set(a.split())
     for o, n in opts:
