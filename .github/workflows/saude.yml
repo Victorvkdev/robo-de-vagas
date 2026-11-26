@@ -1,5 +1,5 @@
 name: saude
-# Segunda 8h em Fortaleza: resumo da semana + saúde das fontes no Telegram.
+# Segunda 8h em Fortaleza: resumo da semana + saúde das fontes no Telegram + backup do D1 no R2.
 # O commit do keepalive evita que o GitHub desligue os agendamentos (repo público sem commit por 60 dias).
 on:
   schedule:
@@ -25,6 +25,15 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python -m engine saude
+      - name: Backup do banco no R2 (privado)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m engine backup
+        continue-on-error: true
       - name: Keepalive
         run: |
           date -u +%Y-%m-%d > .github/keepalive

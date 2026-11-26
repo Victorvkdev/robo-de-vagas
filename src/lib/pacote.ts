@@ -3,6 +3,7 @@
 
 import { type ListJob, esc, localDate, markSent } from "./lista";
 import { getSetting, setSetting } from "./stats";
+import { autoPendingIds } from "./envio";
 
 interface PacoteEnv {
   DB: D1Database;
@@ -49,7 +50,8 @@ export async function pacoteJobs(db: D1Database): Promise<PacoteJob[]> {
          FROM jobs WHERE status IN ('aprovada','precisa_voce') ORDER BY fit DESC, status_ts DESC LIMIT 40`
     )
     .all<PacoteJob>();
-  return r.results;
+  const autos = await autoPendingIds(db); // 🤖 de hoje: vão sozinhas às 11h, não entram no pacote
+  return r.results.filter((j) => !autos.has(j.id));
 }
 
 export function buildPacote(context: string, jobs: PacoteJob[], date: string, learned: { q: string; a: string; ts: number }[] = []): string {

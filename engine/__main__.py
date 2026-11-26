@@ -8,6 +8,10 @@
   python -m engine email                 lê o Zoho, classifica, avisa, rascunha, follow-up e envia o aprovado
   python -m engine email --modo enviar   só envia os rascunhos aprovados no Telegram
   python -m engine email --modo teste    só confere o login IMAP/SMTP
+  python -m engine envio                 envio automático das vagas marcadas 'enviando' (modo do setting envio_modo)
+  python -m engine envio --modo ensaio   preenche e tira print, sem enviar · --modo cv: só gera os CVs
+  python -m engine envio --job ID        testa numa vaga específica (qualquer status)
+  python -m engine backup                backup do D1 no R2 (privado), mantém os 8 últimos
   --local caminho.db                     usa um SQLite local em vez do D1
 """
 import argparse
@@ -20,7 +24,8 @@ import time
 import requests
 import yaml
 
-from . import ai, mail, notify, pipeline, score, sources
+from . import ai, envio, mail, notify, pipeline, score, sources
+from .r2 import R2
 from .d1 import D1, LocalDB
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -178,6 +183,57 @@ def cmd_email(a):
     return 0
 
 
+def cmd_envio(a):
+    db = get_db(a.local)
+    modo = a.modo
+    if modo == "auto":
+        modo = db.setting("envio_modo") or "ensaio"
+    limite = int(a.limite or db.setting("auto_max_day") or 10)
+    gem = None if a.no_ai else ai.Gemini.from_env()
+    r2 = None if a.local else R2.from_env()
+    t0 = time.time()
+    try:
+        out = envio.run(db, gem, mode=modo, limit=limite, r2=r2, job_ids=[x for x in a.job.split(",") if x] or None)
+    except Exception as e:  # noqa: BLE001
+        print("envio: falhou:", str(e)[:300])
+        db.query("UPDATE jobs SET status='aprovada', status_ts=? WHERE status='enviando'", [time.time()])
+        tg_send("⚠️ Envio automático falhou: %s\nAs vagas voltaram para o pacote (/pacote)." % html.escape(str(e)[:200]))
+        return 1
+    out["r2"] = (r2.errors[-1] if r2 and r2.errors else "ok") if r2 else "sem"
+    out["segundos"] = int(time.time() - t0)
+    print(json.dumps(out, ensure_ascii=False))
+    if out["vagas"]:
+        db.query("INSERT INTO runs(kind, started_ts, finished_ts, ok, summary) VALUES ('envio', ?, ?, 1, ?)",
+                 [t0, time.time(), json.dumps(out, ensure_ascii=False)])
+        if modo != "cv":
+            partes = ["🤖 <b>Envio automático</b> (%s): %d enviadas" % ("ensaio" if modo == "ensaio" else "real", out["enviadas"])]
+            if out["conferir"]:
+                partes.append("%d para conferir" % out["conferir"])
+            if out["kit"]:
+                partes.append("%d foram para o pacote" % out["kit"])
+            if out["ensaio"]:
+                partes.append("%d ensaios" % out["ensaio"])
+            msg = " · ".join(partes)
+            if out["r2"] not in ("ok", "sem"):
+                msg += "\n⚠️ R2 recusou (%s): CVs e prints ficaram só aqui no Telegram." % out["r2"]
+            tg_send(msg)
+    return 0
+
+
+def cmd_backup(a):
+    db = get_db(a.local)
+    r2 = R2.from_env()
+    if not r2:
+        print("backup: sem credenciais do Cloudflare")
+        return 1
+    out = envio.backup(db, r2)
+    print(json.dumps(out))
+    if not out["key"]:
+        tg_send("⚠️ Backup semanal do banco falhou (R2: %s). Confira a permissão R2 do token." % html.escape(str(out["erro"])))
+        return 1
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="engine")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -196,8 +252,17 @@ def main(argv=None):
     e.add_argument("--modo", default="ciclo", choices=["ciclo", "enviar", "teste"])
     e.add_argument("--no-ai", action="store_true")
     e.add_argument("--local", default=None)
+    v = sub.add_parser("envio")
+    v.add_argument("--modo", default="auto", choices=["auto", "real", "ensaio", "cv"])
+    v.add_argument("--limite", default=None)
+    v.add_argument("--job", default="")
+    v.add_argument("--no-ai", action="store_true")
+    v.add_argument("--local", default=None)
+    k = sub.add_parser("backup")
+    k.add_argument("--local", default=None)
     a = ap.parse_args(argv)
-    return {"busca": cmd_busca, "saude": cmd_saude, "teste-ia": cmd_teste_ia, "email": cmd_email}[a.cmd](a)
+    return {"busca": cmd_busca, "saude": cmd_saude, "teste-ia": cmd_teste_ia, "email": cmd_email, "envio": cmd_envio,
+            "backup": cmd_backup}[a.cmd](a)
 
 
 if __name__ == "__main__":

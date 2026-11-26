@@ -111,7 +111,10 @@ const ENVIO: Record<string, string> = {
   email: "✉️ por e-mail",
 };
 
-export function card(j: ListJob): string {
+/** 🤖 da janela de veto: formulário aberto (ATS) e nota alta. Sai sozinha às 11h se o Vk não pular. */
+export const isAuto = (j: Pick<ListJob, "apply_type" | "fit">, minFit: number) => j.apply_type === "auto" && j.fit >= minFit;
+
+export function card(j: ListJob, autoMin = 75): string {
   const head = `<b>${j.list_pos}.</b> <a href="${esc(j.url)}">${esc(cut(j.title, 80))}</a>`;
   const meta = [cut(j.company, 40) || "?", cut(j.location, 36), `⭐ ${Math.round(j.fit)}`, j.salary ? `💰 ${cut(j.salary, 30)}` : ""]
     .filter(Boolean)
@@ -122,7 +125,9 @@ export function card(j: ListJob): string {
   if (j.reason) lines.push("💡 " + esc(cut(j.reason, 80)));
   if (j.risk) lines.push("⚠️ " + esc(cut(j.risk, 90)));
   if (j.contact) lines.push("👥 você conhece: " + esc(cut(j.contact, 60)));
-  lines.push(ENVIO[j.apply_type ?? "kit"] ?? ENVIO.kit);
+  lines.push(
+    isAuto(j, autoMin) ? "🤖 vai sozinha às 11h com CV adaptado (❌ para vetar)" : j.apply_type === "auto" ? "📝 formulário aberto (pacote)" : ENVIO[j.apply_type ?? "kit"] ?? ENVIO.kit
+  );
   return lines.join("\n");
 }
 
@@ -131,6 +136,7 @@ export function row(j: Pick<ListJob, "id" | "list_pos" | "status">): Button[] {
   if (j.status === "precisa_voce") return [{ text: `✋ ${j.list_pos} com você · desfazer`, callback_data: `un:${j.id}` }];
   if (j.status === "pulada") return [{ text: `❌ ${j.list_pos} pulada · desfazer`, callback_data: `un:${j.id}` }];
   if (j.status === "enviada") return [{ text: `📨 ${j.list_pos} enviada`, callback_data: "noop" }];
+  if (j.status === "enviando") return [{ text: `🤖 ${j.list_pos} enviando…`, callback_data: "noop" }];
   return [
     { text: `✅ ${j.list_pos}`, callback_data: `ap:${j.id}` },
     { text: `❌ ${j.list_pos}`, callback_data: `sk:${j.id}` },
@@ -141,11 +147,14 @@ export function row(j: Pick<ListJob, "id" | "list_pos" | "status">): Button[] {
 const visible = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&(amp|lt|gt|quot);/g, "x").length;
 
 /** Blocos de até 10 vagas, sem passar do limite de 4096 caracteres do Telegram. */
-export function blocks(jobs: ListJob[], date: string, cap: number): { text: string; keyboard: Keyboard }[] {
+export function blocks(jobs: ListJob[], date: string, cap: number, autoMin = 75): { text: string; keyboard: Keyboard }[] {
   const out: { text: string; keyboard: Keyboard }[] = [];
   const header =
     `<b>📋 Lista de ${fmtDay(date)}</b> · ${jobs.length} vagas\n` +
-    `Toque ✅/❌ ou responda <b>ok</b> (as ${cap} primeiras), <b>ok 1 3 5</b> ou <b>ok menos 2 4</b>.`;
+    `Toque ✅/❌ ou responda <b>ok</b> (as ${cap} primeiras), <b>ok 1 3 5</b> ou <b>ok menos 2 4</b>.` +
+    (jobs.some((j) => isAuto(j, autoMin) && j.status === "listada")
+      ? `\n🤖 = sai sozinha às 11h se você não tocar ❌.`
+      : "");
   let cur: ListJob[] = [];
   let size = visible(header);
   const flush = () => {
@@ -153,12 +162,12 @@ export function blocks(jobs: ListJob[], date: string, cap: number): { text: stri
     const first = cur[0].list_pos;
     const last = cur[cur.length - 1].list_pos;
     const top = out.length === 0 ? header + "\n\n" : `<b>${first}–${last}</b>\n\n`;
-    out.push({ text: top + cur.map(card).join("\n\n"), keyboard: cur.map(row) });
+    out.push({ text: top + cur.map((j) => card(j, autoMin)).join("\n\n"), keyboard: cur.map(row) });
     cur = [];
     size = 40;
   };
   for (const j of jobs) {
-    const c = visible(card(j));
+    const c = visible(card(j, autoMin));
     if (cur.length >= 10 || size + c + 2 > 3900) flush();
     cur.push(j);
     size += c + 2;
@@ -179,7 +188,7 @@ export async function todayList(db: D1Database, date: string): Promise<ListJob[]
   const r = await db
     .prepare(
       `SELECT ${LIST_COLS} FROM jobs WHERE list_date = ? AND list_pos IS NOT NULL
-        AND status IN ('listada','aprovada','precisa_voce','pulada','enviada') ORDER BY list_pos`
+        AND status IN ('listada','aprovada','precisa_voce','pulada','enviada','enviando') ORDER BY list_pos`
     )
     .bind(date)
     .all<ListJob>();

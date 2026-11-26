@@ -36,6 +36,7 @@ import {
   reminders,
 } from "./lib/mail";
 import { handleAprendi, handleEnviei, sendPacote } from "./lib/pacote";
+import { autoMin, autoPendingIds, cmdEnvio, kickAuto, notSent, staleEnviando } from "./lib/envio";
 import { fmtDate, getSetting, getStats, setSetting, topJobs } from "./lib/stats";
 
 export interface Env {
@@ -66,6 +67,7 @@ const COMMANDS = [
   { command: "aprovadas", description: "Aprovadas que faltam enviar" },
   { command: "pacote", description: "Arquivo com as aprovadas para o chat do Sonnet" },
   { command: "pendencias", description: "Vídeo, questionário, teste: o que falta fazer" },
+  { command: "envio", description: "Envio automático: modo, teto e o que saiu sozinho" },
   { command: "agenda", description: "Entrevistas e prazos de teste" },
   { command: "aprendi", description: "Ensinar uma resposta: /aprendi pergunta → resposta" },
   { command: "rascunhos", description: "Respostas esperando seu Enviar" },
@@ -75,7 +77,7 @@ const COMMANDS = [
   { command: "pausar", description: "Pausar o robô" },
   { command: "voltar", description: "Retomar o robô" },
 ];
-const COMMANDS_VERSION = "8";
+const COMMANDS_VERSION = "9";
 
 const HELP = [
   "<b>Robô de Vagas</b>",
@@ -83,6 +85,7 @@ const HELP = [
   "/aprovadas — aprovadas que faltam enviar (toque 📨 quando enviar)",
   "/pacote — arquivo com todas as aprovadas para colar no chat do Sonnet",
   "enviei 1 3 5 — marca como enviadas (números do pacote)",
+  "/envio — envio automático (🤖 às 11h): /envio real · ensaio · off · agora",
   "/pendencias — vídeo, questionário, completar candidatura, teste (com ✅ Feito)",
   "/agenda — entrevistas e prazos de teste",
   "/aprendi pergunta → resposta — ensina uma resposta de formulário",
@@ -140,7 +143,8 @@ export async function statusText(env: Env): Promise<string> {
 
 async function sendList(env: Env, list: ListJob[], date: string) {
   const cap = await maxSend(env);
-  for (const b of blocks(list, date, cap)) {
+  const min = await autoMin(env.DB);
+  for (const b of blocks(list, date, cap, min)) {
     await send(env, b.text, { reply_markup: { inline_keyboard: b.keyboard } });
   }
 }
@@ -194,6 +198,9 @@ async function handleOk(env: Env, text: string): Promise<string | null> {
       out.push(`${j.list_pos}. <a href="${esc(j.url)}">${esc(j.title)}</a> — ${esc(j.company || "?")}`);
   }
   if (overCap.length) out.push(`⏸ Teto de envios do dia atingido. Ficaram de fora: ${overCap.join(", ")}`);
+  const autos = await autoPendingIds(env.DB);
+  const autoPos = list.filter((j) => autos.has(j.id)).map((j) => j.list_pos);
+  if (autoPos.length) out.push(`🤖 Vão sozinhas às 11h (fora do pacote): ${autoPos.join(", ")}`);
   out.push("", "📦 O pacote para o Sonnet vem a seguir. No fim, cole aqui a linha \"enviei …\" que ele te der.");
   return out.join("\n");
 }
@@ -248,6 +255,16 @@ async function handleCallback(env: Env, cq: NonNullable<TgUpdate["callback_query
         },
       });
     }
+    return tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: msg });
+  }
+  if (parts[0] === "nr") {
+    const msg = await notSent(env.DB, parts[1]);
+    if (cq.message)
+      await tg(env, "editMessageReplyMarkup", {
+        chat_id: cq.message.chat.id,
+        message_id: cq.message.message_id,
+        reply_markup: { inline_keyboard: [[{ text: "↩️ voltou para o pacote", callback_data: "noop" }]] },
+      });
     return tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: msg });
   }
   if (parts[0] === "pk") {
@@ -318,6 +335,8 @@ export async function handleCommand(env: Env, text: string, replyTo?: number): P
       return null;
     case "/aprendi":
       return handleAprendi(env, text);
+    case "/envio":
+      return cmdEnvio(env, text, (t) => send(env, t));
     case "/pendencias":
       await cmdPendencias(env, sendFn);
       return null;
@@ -403,6 +422,11 @@ export async function tick(env: Env, now = Date.now()) {
       console.error("dailyList", (e as Error).message);
     });
   }
+  // janela de veto: às 11h (até 14h, se o Worker atrasar) as 🤖 não puladas vão para o envio automático
+  if (h >= 11 && h < 15) {
+    await kickAuto(env, (t) => send(env, t), now).catch((e) => console.error("envio", (e as Error).message));
+  }
+  await staleEnviando(env.DB, (t) => send(env, t), now).catch((e) => console.error("stale", (e as Error).message));
 }
 
 export async function dailyList(env: Env, now = Date.now()) {

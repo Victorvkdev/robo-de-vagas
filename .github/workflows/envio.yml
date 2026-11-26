@@ -1,0 +1,45 @@
+name: envio
+# Envio automático (janela de veto). Quem dispara é o Worker às 11h com as vagas 🤖 que o Vk não pulou.
+# Modos: auto (usa o setting envio_modo do banco) | ensaio (preenche e manda print, não envia) | cv (só gera os CVs).
+# Nada de arquivo vai para artifacts (repo público): CV e comprovante vão só para o R2 privado e o Telegram.
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "auto | real | ensaio | cv"
+        default: auto
+        type: choice
+        options: [auto, real, ensaio, cv]
+      job:
+        description: "id da vaga para testar (opcional, separados por vírgula)"
+        default: ""
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: envio
+  cancel-in-progress: false
+jobs:
+  envio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/requirements.txt
+      - run: pip install -r engine/requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: Rodar
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODO: ${{ inputs.modo || 'auto' }}
+          JOB: ${{ inputs.job }}
+        run: python -m engine envio --modo "$MODO" --job "$JOB"

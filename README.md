@@ -55,3 +55,11 @@ Manual run: Actions → busca → Run workflow (`dry-run` only prints counts, `l
 3. Job search + daily list on Telegram ✅
 4. Email, calendar, drafts, follow-up ✅
 5. Auto-apply on open ATS forms, network, freelance, talent pools
+
+## Envio automático (entrega 5b)
+Lista das 8h marca 🤖 as vagas de formulário aberto (Greenhouse, Lever, Ashby, Workable, Recruitee, SmartRecruiters)
+com nota ≥ 75. O que não for pulado até 11h vai para o workflow `envio`: CV adaptado (só blocos aprovados do
+Super Contexto, HTML → PDF), formulário preenchido com Playwright, comprovante no Telegram e no R2 privado.
+Captcha, login ou pergunta obrigatória sem resposta aprovada = a vaga vai para o pacote. Começa em modo ensaio
+(preenche e manda print, sem enviar); `/envio real` liga o envio de verdade.
+
