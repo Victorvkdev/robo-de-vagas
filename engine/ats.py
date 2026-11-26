@@ -334,6 +334,8 @@ def run(browser, job, perfil, cv_path, mode="real", cover_path=None, learned=(),
     try:
         if "linkedin.com" in (job.get("url") or ""):
             raise Abort("LinkedIn nunca é enviado pelo robô")
+        if mode == "real" and "lever.co" in (job.get("url") or ""):
+            raise Abort("Lever pede captcha para o robô: vai pelo pacote")
         _resolve_form_page(page, apply_url(job["url"]))
         _close_cookies(page)
         if _visible_captcha(page):

@@ -32,7 +32,7 @@ export async function autoCandidates(db: D1Database, date: string): Promise<List
   const r = await db
     .prepare(
       `SELECT id, list_pos, title, company, location, url, salary, fit, summary, reason, risk, contact, apply_type, status
-         FROM jobs WHERE list_date = ? AND status IN ('listada','aprovada') AND apply_type = 'auto' AND fit >= ?
+         FROM jobs WHERE list_date = ? AND status IN ('listada','aprovada') AND apply_type = 'auto' AND fit >= ? AND url NOT LIKE '%lever.co%'
         ORDER BY fit DESC LIMIT ?`
     )
     .bind(date, min, max)

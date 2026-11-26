@@ -112,7 +112,10 @@ const ENVIO: Record<string, string> = {
 };
 
 /** 🤖 da janela de veto: formulário aberto (ATS) e nota alta. Sai sozinha às 11h se o Vk não pular. */
-export const isAuto = (j: Pick<ListJob, "apply_type" | "fit">, minFit: number) => j.apply_type === "auto" && j.fit >= minFit;
+/** ATS que mostram captcha para o robô (IP do GitHub): vão pelo pacote. */
+export const NO_AUTO = /lever\.co/i;
+export const isAuto = (j: Pick<ListJob, "apply_type" | "fit" | "url">, minFit: number) =>
+  j.apply_type === "auto" && j.fit >= minFit && !NO_AUTO.test(j.url || "");
 
 export function card(j: ListJob, autoMin = 75): string {
   const head = `<b>${j.list_pos}.</b> <a href="${esc(j.url)}">${esc(cut(j.title, 80))}</a>`;
