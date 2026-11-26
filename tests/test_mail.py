@@ -297,3 +297,22 @@ class Entrega3AjustesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinkedInExternoTest(unittest.TestCase):
+    def test_detail(self):
+        from engine import sources
+        page = ('<div class="show-more-less-html__markup relative"><p>Fully remote role. Figma.</p></div>'
+                '<code id="applyUrl" style="display: none"><!--"https://www.linkedin.com/jobs/view/externalApply/123?'
+                'url=https%3A%2F%2Fjobs%2Elever%2Eco%2Facme%2Fabc%3Fsource%3DLinkedIn&amp;urlHash=xx"--></code>')
+        desc, ext = sources.linkedin_detail(page)
+        self.assertIn("Fully remote", desc)
+        self.assertEqual(ext, "https://jobs.lever.co/acme/abc?source=LinkedIn")
+        self.assertEqual(sources.linkedin_detail('<div class="show-more-less-html__markup">x</div>')[1], None)
+        j = dict(source="linkedin", url=ext)
+        self.assertEqual(score.apply_type(j), "auto")
+        self.assertEqual(score.apply_type(dict(source="linkedin", url="https://br.linkedin.com/jobs/view/x-1")),
+                         "linkedin")
+        j = dict(source="linkedin", title="Product Designer", location="Curitiba, Paraná, Brazil (remoto)",
+                 description="This is a fully remote position.")
+        self.assertEqual(score.eligibility(j, CFG), "aberta")

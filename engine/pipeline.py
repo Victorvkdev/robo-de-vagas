@@ -30,7 +30,7 @@ UPSERT = """INSERT INTO jobs (id, source, company, company_key, title, location,
  posted_ts, first_seen, last_seen, seen_count, dkey, desc_partial, origin, h)
 VALUES ({vals})
 ON CONFLICT(id) DO UPDATE SET
- title=excluded.title, location=excluded.location, company=excluded.company, company_key=excluded.company_key,
+ title=excluded.title, location=excluded.location, url=excluded.url, company=excluded.company, company_key=excluded.company_key,
  description=CASE WHEN length(COALESCE(excluded.description,'')) > length(COALESCE(jobs.description,''))
                   THEN excluded.description ELSE jobs.description END,
  salary=COALESCE(NULLIF(excluded.salary,''), jobs.salary), regime=COALESCE(NULLIF(excluded.regime,''), jobs.regime),
@@ -49,7 +49,7 @@ COLS = ("id", "source", "company", "company_key", "title", "location", "url", "d
         "apply_type", "status", "status_ts", "posted_ts", "first_seen", "last_seen", "seen_count", "dkey",
         "desc_partial", "origin", "h")
 # campos que, se mudarem, justificam regravar a linha (o resto só atualiza last_seen 1x por dia)
-HASHED = ("title", "location", "company", "salary", "regime", "area", "level", "years", "elig", "fit", "ghost",
+HASHED = ("url", "title", "location", "company", "salary", "regime", "area", "level", "years", "elig", "fit", "ghost",
           "priority", "reason", "risk", "apply_type", "dkey", "desc_partial")
 TOUCH_AFTER = 20 * 3600  # vaga igual só regrava last_seen se a última marca tem mais de 20h
 

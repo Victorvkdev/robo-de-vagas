@@ -98,7 +98,9 @@ def eligibility(job, cfg):
     if job.get("source") == "linkedin":
         # LinkedIn público: "Cidade, Estado, Brazil (remoto)" sem confirmação de remoto no título = presencial
         raw = re.sub(r"\(remoto\)", "", loc).strip()
-        if "," in raw and not REMOTE.search(title):
+        if HYBRID.search(desc[:3000]) and not REMOTE.search(title):
+            return "presencial"
+        if "," in raw and not REMOTE.search(title) and not REMOTE.search(desc[:3000]):
             return "presencial"
     ok, blk = _rx_terms(g.get("ok_terms")), _rx_terms(g.get("block_terms"))
     if blk and blk.search(loc):
@@ -188,7 +190,7 @@ def salary_warning(salary, lvl, pretensao):
 
 def apply_type(job):
     src, url = job.get("source") or "", job.get("url") or ""
-    if src == "linkedin" or "linkedin.com" in url:
+    if "linkedin.com" in url:  # Easy Apply: só pelo LinkedIn, com você
         return "linkedin"
     if src in ATS or ATS_HOSTS.search(url):
         return "auto"

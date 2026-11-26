@@ -33,6 +33,7 @@ import {
   outboxCallback,
   reminders,
 } from "./lib/mail";
+import { handleEnviei, sendPacote } from "./lib/pacote";
 import { fmtDate, getSetting, getStats, setSetting, topJobs } from "./lib/stats";
 
 export interface Env {
@@ -61,6 +62,7 @@ interface TgUpdate {
 const COMMANDS = [
   { command: "lista", description: "Lista de hoje com botões" },
   { command: "aprovadas", description: "Aprovadas que faltam enviar" },
+  { command: "pacote", description: "Arquivo com as aprovadas para o chat do Sonnet" },
   { command: "agenda", description: "Entrevistas e prazos de teste" },
   { command: "rascunhos", description: "Respostas esperando seu Enviar" },
   { command: "retornos", description: "Retornos das candidaturas (e-mail)" },
@@ -69,12 +71,14 @@ const COMMANDS = [
   { command: "pausar", description: "Pausar o robô" },
   { command: "voltar", description: "Retomar o robô" },
 ];
-const COMMANDS_VERSION = "5";
+const COMMANDS_VERSION = "6";
 
 const HELP = [
   "<b>Robô de Vagas</b>",
   "/lista — lista de hoje com botões",
   "/aprovadas — aprovadas que faltam enviar (toque 📨 quando enviar)",
+  "/pacote — arquivo com todas as aprovadas para colar no chat do Sonnet",
+  "enviei 1 3 5 — marca como enviadas (números do pacote)",
   "/agenda — entrevistas e prazos de teste",
   "/rascunhos — respostas de e-mail esperando ✉️ Enviar",
   "/retornos — recusas, testes, entrevistas e confirmações dos últimos 30 dias",
@@ -154,10 +158,13 @@ async function cmdAprovadas(env: Env) {
       `<b>${j.list_pos ?? "•"}.</b> <a href="${esc(j.url)}">${esc(j.title)}</a> — ${esc(j.company || "?")}` +
       (j.apply_type === "linkedin" ? " · ✋ LinkedIn" : "")
   );
-  const kb: Keyboard = jobs.map((j) => [{ text: `📨 Enviei ${j.list_pos ?? ""} ${(j.company || "").slice(0, 20)}`.trim(), callback_data: `ev:${j.id}` }]);
+  const kb: Keyboard = [
+    [{ text: "📦 Pacote para o Sonnet", callback_data: "pk:all" }],
+    ...jobs.map((j) => [{ text: `📨 Enviei ${j.list_pos ?? ""} ${(j.company || "").slice(0, 20)}`.trim(), callback_data: `ev:${j.id}` }]),
+  ];
   await send(
     env,
-    [`<b>Aprovadas que faltam enviar (${jobs.length})</b>`, "O envio automático chega na entrega 5. Enviou? Toque 📨.", "", ...lines].join("\n"),
+    [`<b>Aprovadas que faltam enviar (${jobs.length})</b>`, "Toque 📦 para o arquivo do Sonnet. Enviou? Toque 📨 ou mande \"enviei 1 3 5\".", "", ...lines].join("\n"),
     { reply_markup: { inline_keyboard: kb } }
   );
 }
@@ -181,7 +188,7 @@ async function handleOk(env: Env, text: string): Promise<string | null> {
       out.push(`${j.list_pos}. <a href="${esc(j.url)}">${esc(j.title)}</a> — ${esc(j.company || "?")}`);
   }
   if (overCap.length) out.push(`⏸ Teto de envios do dia atingido. Ficaram de fora: ${overCap.join(", ")}`);
-  out.push("", "Até a entrega 5, o envio é com você ou com o Claude: /aprovadas mostra os links.");
+  out.push("", "📦 O pacote para o Sonnet vem a seguir. No fim, cole aqui a linha \"enviei …\" que ele te der.");
   return out.join("\n");
 }
 
@@ -221,6 +228,10 @@ async function handleMailCallback(env: Env, cq: NonNullable<TgUpdate["callback_q
 async function handleCallback(env: Env, cq: NonNullable<TgUpdate["callback_query"]>) {
   const parts = (cq.data ?? "").split(":");
   if (["ob", "mc", "mf"].includes(parts[0])) return handleMailCallback(env, cq, parts);
+  if (parts[0] === "pk") {
+    await tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text: "Gerando o pacote…" });
+    return sendPacote(env, (t) => send(env, t));
+  }
   const [action, id] = parts;
   const answer = (text: string) => tg(env, "answerCallbackQuery", { callback_query_id: cq.id, text });
   if (action === "noop" || !id) return answer("");
@@ -298,6 +309,9 @@ export async function handleCommand(env: Env, text: string, replyTo?: number): P
     case "/aprovadas":
       await cmdAprovadas(env);
       return null;
+    case "/pacote":
+      await sendPacote(env, (t) => send(env, t));
+      return null;
     case "/painel":
       return env.PANEL_URL ? `Painel: ${esc(env.PANEL_URL)}` : "Painel ainda não configurado.";
     case "/pausar":
@@ -307,7 +321,14 @@ export async function handleCommand(env: Env, text: string, replyTo?: number): P
       await setSetting(env.DB, "paused", "0");
       return "▶️ Voltei. Lista amanhã às 8h (ou /lista se a de hoje já saiu).";
     default: {
+      const enviei = await handleEnviei(env, text);
+      if (enviei) return enviei;
       const ok = await handleOk(env, text);
+      if (ok && /^(✅|✋)/m.test(ok)) {
+        await send(env, ok);
+        await sendPacote(env, (t) => send(env, t));
+        return null;
+      }
       return ok ?? "Não entendi. " + HELP;
     }
   }

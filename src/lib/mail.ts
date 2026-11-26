@@ -161,7 +161,7 @@ export async function maybeEdit(
   const [idS, promptS] = pending.split(":");
   const id = Number(idS);
   const isReply = replyTo !== undefined && String(replyTo) === promptS;
-  if (!isReply && (text.startsWith("/") || /^(ok|okay|aprovo|aprova)\b/i.test(text.trim()))) return null;
+  if (!isReply && (text.startsWith("/") || /^(ok|okay|aprovo|aprova|enviei)\b/i.test(text.trim()))) return null;
   if (text.trim().length < 10) return "Texto muito curto. Mande o e-mail completo ou /cancelar.";
   await setSetting(env.DB, "edit_outbox", "");
   const r = await env.DB.prepare(

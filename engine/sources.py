@@ -307,9 +307,28 @@ TERMOS_LINKEDIN = ("product designer", "ux ui designer", "ux designer", "design 
                    "web designer", "crm")
 
 
+LINKEDIN_DETAIL_CAP = 80
+
+
+def linkedin_detail(html_text):
+    """Página pública da vaga: (descrição, link de candidatura no site da empresa ou None se for Easy Apply)."""
+    d = re.search(r'show-more-less-html__markup[^>]*>(.*?)</div>', html_text or "", re.S)
+    desc = clean(d.group(1)) if d else ""
+    ext = None
+    m = re.search(r'<code id="applyUrl"[^>]*><!--\s*"?(.*?)"?\s*--></code>', html_text or "", re.S)
+    if m:
+        raw = html.unescape(m.group(1)).strip()
+        q = parse_qs(urlparse(raw).query)
+        ext = (q.get("url") or [raw])[0]
+        if "linkedin.com" in (urlparse(ext).hostname or ""):
+            ext = None
+    return desc, ext
+
+
 def linkedin(_s):
-    """Busca pública (sem login) das últimas 24h, remoto, Brasil. Nunca aplica: vira card com link."""
-    out = []
+    """Busca pública (sem login) das últimas 24h, remoto, Brasil. Nunca aplica pelo LinkedIn: quando a vaga manda
+    para o site da empresa, o link do card passa a ser o do site (e o envio segue o ATS de lá)."""
+    out, seen = [], set()
     for termo in TERMOS_LINKEDIN:
         for start in (0, 25):
             url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + urlencode(
@@ -324,12 +343,32 @@ def linkedin(_s):
                 emp = re.search(r'base-search-card__subtitle">(.*?)</h4>', card, re.S)
                 loc = re.search(r'job-search-card__location">\s*(.*?)\s*</span>', card, re.S)
                 quando = re.search(r'datetime="([\d-]+)"', card)
-                if not (link and cargo):
+                if not (link and cargo) or link.group(1) in seen:
                     continue
+                seen.add(link.group(1))
                 out.append(job("linkedin", emp.group(1) if emp else "", cargo.group(1),
                                (clean(loc.group(1)) if loc else "Brazil") + " (remoto)", link.group(1), "", "",
                                quando.group(1) if quando else None, partial=True))
             time.sleep(1)
+    # detalhe das que passam no título: descrição + candidatura no site da empresa
+    n = 0
+    for j in out:
+        if n >= LINKEDIN_DETAIL_CAP or not keep_title(j["title"]):
+            continue
+        jid = re.search(r"(\d{6,})/?$", j["url"])
+        if not jid:
+            continue
+        n += 1
+        try:
+            desc, ext = linkedin_detail(
+                _req("GET", "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/" + jid.group(1)).text)
+        except requests.RequestException:
+            continue
+        if desc:
+            j["description"], j["desc_partial"] = desc[:12000], False
+        if ext:
+            j["linkedin_url"], j["url"] = j["url"], ext
+        time.sleep(0.5)
     return out
 
 
