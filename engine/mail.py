@@ -753,17 +753,29 @@ def imap_login():
     raise RuntimeError("IMAP: login falhou (%s)" % type(last).__name__)
 
 
+SKIP_FOLDERS = re.compile(r"(?i)^(sent|enviados?|sent items|sent messages|drafts?|rascunhos?|trash|lixeira|deleted|"
+                          r"outbox|caixa de sa[ií]da|templates?|modelos?)$")
+
+
 def _folders(M):
+    """Todas as pastas que recebem e-mail (Inbox, Notification, Newsletter, Spam e as que você criar).
+    Fica de fora só Enviados, Rascunhos, Lixeira, Saída e Modelos."""
     out, sent = ["INBOX"], None
     try:
         typ, lst = M.list()
         for l in lst or []:
             s = l.decode("utf-8", "replace")
             name = s.split(' "/" ')[-1].strip().strip('"')
-            if re.search(r"spam|junk|lixo", name, re.I):
-                out.append(name)
-            if not sent and (re.search(r"\\Sent", s) or re.fullmatch(r"(?i)sent|enviados|sent items|sent messages", name)):
+            flags = s.split(")")[0]
+            if not sent and (re.search(r"\\Sent", flags) or re.fullmatch(r"(?i)sent|enviados|sent items|sent messages",
+                                                                          name)):
                 sent = name
+            if name.upper() == "INBOX" or re.search(r"\\(Sent|Drafts|Trash|Junk_no|Noselect)", flags, re.I):
+                continue
+            leaf = name.split("/")[-1]
+            if SKIP_FOLDERS.match(leaf):
+                continue
+            out.append(name)
     except Exception:  # noqa: BLE001
         pass
     return out, sent

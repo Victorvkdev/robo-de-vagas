@@ -358,3 +358,35 @@ export async function cmdRascunhos(env: MailEnv, send: Send) {
     });
   }
 }
+
+const ICON: Record<string, string> = {
+  entrevista: "📅",
+  agendar: "🗓",
+  teste: "🧪",
+  recrutador: "💬",
+  recusa: "❌",
+  recebida: "📥",
+  oferta: "🎉",
+  orcamento: "💼",
+};
+
+/** /retornos: últimos e-mails das candidaturas (sem spam), com a classe e a empresa. */
+export async function cmdRetornos(env: MailEnv, send: Send) {
+  const r = await env.DB.prepare(
+    `SELECT e.id, e.ts, e.class, COALESCE(e.company, j.company) AS company, e.subject, COALESCE(j.title, '') AS title
+       FROM emails e LEFT JOIN jobs j ON j.id = e.job_id
+      WHERE e.class <> 'spam' AND e.ts >= ? ORDER BY e.ts DESC LIMIT 20`
+  )
+    .bind(Date.now() / 1000 - 30 * 86400)
+    .all<{ id: string; ts: number; class: string; company: string | null; subject: string; title: string }>();
+  if (!r.results.length) return send("Nenhum retorno de candidatura nos últimos 30 dias.");
+  const lines = r.results.map(
+    (e) =>
+      `${ICON[e.class] ?? "•"} ${fmtDate(e.ts).slice(0, 5)} · <b>${esc(e.company || "?")}</b>` +
+      (e.title && !e.title.startsWith("mail:") ? ` · ${esc(e.title.slice(0, 40))}` : "") +
+      `\n   <i>${esc((e.subject || "").slice(0, 70))}</i>`
+  );
+  return send(
+    ["<b>Retornos dos últimos 30 dias</b>", "📅 entrevista · 🗓 marcar horário · 🧪 teste · 💬 recrutador · ❌ recusa · 📥 recebida", "", ...lines].join("\n")
+  );
+}

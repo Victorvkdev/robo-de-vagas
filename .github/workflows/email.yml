@@ -1,9 +1,10 @@
 name: email
-# A cada 15 min: lê o Zoho (IMAP), classifica, avisa no Telegram, rascunha respostas e envia o que o Vk aprovou.
-# O Worker dispara "enviar" na hora em que ele toca ✉️ Enviar; o agendamento é a rede de segurança.
+# Lê o Zoho (IMAP), classifica, avisa no Telegram, rascunha respostas e envia o que o Vk aprovou.
+# Quem dispara é o Worker: "ciclo" a cada 15 min (o agendamento do GitHub falhava) e "enviar" no toque em ✉️ Enviar.
+# O agendamento de hora em hora fica só como rede de segurança, caso o Worker pare.
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "37 * * * *"
   workflow_dispatch:
     inputs:
       modo:

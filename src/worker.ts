@@ -25,6 +25,7 @@ import {
   cancelEdit,
   cmdAgenda,
   cmdRascunhos,
+  cmdRetornos,
   dispatchWorkflow,
   fixClass,
   flushNotices,
@@ -62,12 +63,13 @@ const COMMANDS = [
   { command: "aprovadas", description: "Aprovadas que faltam enviar" },
   { command: "agenda", description: "Entrevistas e prazos de teste" },
   { command: "rascunhos", description: "Respostas esperando seu Enviar" },
+  { command: "retornos", description: "Retornos das candidaturas (e-mail)" },
   { command: "status", description: "Os 4 números e a próxima entrevista" },
   { command: "painel", description: "Link do painel" },
   { command: "pausar", description: "Pausar o robô" },
   { command: "voltar", description: "Retomar o robô" },
 ];
-const COMMANDS_VERSION = "4";
+const COMMANDS_VERSION = "5";
 
 const HELP = [
   "<b>Robô de Vagas</b>",
@@ -75,6 +77,7 @@ const HELP = [
   "/aprovadas — aprovadas que faltam enviar (toque 📨 quando enviar)",
   "/agenda — entrevistas e prazos de teste",
   "/rascunhos — respostas de e-mail esperando ✉️ Enviar",
+  "/retornos — recusas, testes, entrevistas e confirmações dos últimos 30 dias",
   "/status — os 4 números e a próxima entrevista",
   "/painel — link do painel",
   "/pausar e /voltar — pausa ou retoma o robô",
@@ -280,6 +283,9 @@ export async function handleCommand(env: Env, text: string, replyTo?: number): P
     case "/rascunhos":
       await cmdRascunhos(env, sendFn);
       return null;
+    case "/retornos":
+      await cmdRetornos(env, sendFn);
+      return null;
     case "/start":
     case "/ajuda":
     case "/help":
@@ -313,6 +319,8 @@ export async function tick(env: Env, now = Date.now()) {
   const sendFn = (t: string, extra: Record<string, unknown> = {}) => send(env, t, extra);
   await reminders(env, sendFn, now).catch((e) => console.error("reminders", (e as Error).message));
   await flushNotices(env, sendFn, now).catch((e) => console.error("notices", (e as Error).message));
+  // o agendamento do GitHub (*/15) é descartado com frequência: o Worker dispara a leitura do e-mail a cada tick
+  await dispatchWorkflow(env, "email.yml", "ciclo").catch((e) => console.error("email", (e as Error).message));
   const h = localHour(now);
   if (h >= 8 && h < 12) {
     await dailyList(env, now).catch(async (e) => {
