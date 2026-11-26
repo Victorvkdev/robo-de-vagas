@@ -35,7 +35,7 @@ import {
   outboxCallback,
   reminders,
 } from "./lib/mail";
-import { handleEnviei, sendPacote } from "./lib/pacote";
+import { handleAprendi, handleEnviei, sendPacote } from "./lib/pacote";
 import { fmtDate, getSetting, getStats, setSetting, topJobs } from "./lib/stats";
 
 export interface Env {
@@ -67,6 +67,7 @@ const COMMANDS = [
   { command: "pacote", description: "Arquivo com as aprovadas para o chat do Sonnet" },
   { command: "pendencias", description: "Vídeo, questionário, teste: o que falta fazer" },
   { command: "agenda", description: "Entrevistas e prazos de teste" },
+  { command: "aprendi", description: "Ensinar uma resposta: /aprendi pergunta → resposta" },
   { command: "rascunhos", description: "Respostas esperando seu Enviar" },
   { command: "retornos", description: "Retornos das candidaturas (e-mail)" },
   { command: "status", description: "Os 4 números e a próxima entrevista" },
@@ -74,7 +75,7 @@ const COMMANDS = [
   { command: "pausar", description: "Pausar o robô" },
   { command: "voltar", description: "Retomar o robô" },
 ];
-const COMMANDS_VERSION = "7";
+const COMMANDS_VERSION = "8";
 
 const HELP = [
   "<b>Robô de Vagas</b>",
@@ -84,6 +85,7 @@ const HELP = [
   "enviei 1 3 5 — marca como enviadas (números do pacote)",
   "/pendencias — vídeo, questionário, completar candidatura, teste (com ✅ Feito)",
   "/agenda — entrevistas e prazos de teste",
+  "/aprendi pergunta → resposta — ensina uma resposta de formulário",
   "/rascunhos — respostas de e-mail esperando ✉️ Enviar",
   "/retornos — recusas, testes, entrevistas e confirmações dos últimos 30 dias",
   "/status — os 4 números e a próxima entrevista",
@@ -314,6 +316,8 @@ export async function handleCommand(env: Env, text: string, replyTo?: number): P
     case "/rascunhos":
       await cmdRascunhos(env, sendFn);
       return null;
+    case "/aprendi":
+      return handleAprendi(env, text);
     case "/pendencias":
       await cmdPendencias(env, sendFn);
       return null;
@@ -359,12 +363,39 @@ export async function handleCommand(env: Env, text: string, replyTo?: number): P
 
 // ---------------------------------------------------------------- cron (a cada 15 min)
 // Sempre: lembretes de entrevista e fila do silêncio. Das 8h às 11h59: lista do dia (só sai uma vez).
+/** De hora em hora: se a leitura do e-mail não roda com sucesso há 90 min, avisa (no máximo 1x a cada 6h). */
+async function watchdog(env: Env, now: number) {
+  if (new Date(now).getUTCMinutes() >= 15 || !env.GH_DISPATCH_TOKEN || !env.GH_REPO) return;
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/email.yml/runs?per_page=10`, {
+    headers: {
+      authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "robo-de-vagas-worker",
+    },
+  });
+  if (!r.ok) return;
+  const runs = ((await r.json()) as { workflow_runs?: { conclusion: string | null; updated_at: string }[] }).workflow_runs ?? [];
+  const lastOk = runs.find((x) => x.conclusion === "success");
+  const age = lastOk ? (now - Date.parse(lastOk.updated_at)) / 60000 : Infinity;
+  const fails = runs.slice(0, 3).filter((x) => x.conclusion === "failure").length;
+  if (age < 90 && fails < 3) return;
+  const last = Number((await getSetting(env.DB, "alert_email_ts")) ?? 0);
+  if (now - last < 6 * 3600_000) return;
+  await setSetting(env.DB, "alert_email_ts", String(now));
+  await send(
+    env,
+    `⚠️ A leitura do e-mail ${fails >= 3 ? "falhou nas últimas 3 rodadas" : `não roda com sucesso há ${Number.isFinite(age) ? Math.round(age) + " min" : "muito tempo"}`}. ` +
+      `Confira no GitHub: Actions → email.`
+  );
+}
+
 export async function tick(env: Env, now = Date.now()) {
   const sendFn = (t: string, extra: Record<string, unknown> = {}) => send(env, t, extra);
   await reminders(env, sendFn, now).catch((e) => console.error("reminders", (e as Error).message));
   await flushNotices(env, sendFn, now).catch((e) => console.error("notices", (e as Error).message));
   // o agendamento do GitHub (*/15) é descartado com frequência: o Worker dispara a leitura do e-mail a cada tick
   await dispatchWorkflow(env, "email.yml", "ciclo").catch((e) => console.error("email", (e as Error).message));
+  await watchdog(env, now).catch((e) => console.error("watchdog", (e as Error).message));
   const h = localHour(now);
   if (h >= 8 && h < 12) {
     await dailyList(env, now).catch(async (e) => {

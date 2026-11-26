@@ -1068,8 +1068,9 @@ def run(db, tg, gem=None, mode="ciclo", now=None, mailbox=None, smtp=None):
     if mode == "enviar":
         out["avisos"] = notifier.flush()
         return out
-    body = (db.query("SELECT body FROM profile WHERE key='super_contexto'") or [{}])[0].get("body")
-    perfil = ai.perfil_curto(body, 7000)
+    body = (db.query("SELECT body FROM profile WHERE key='super_contexto'") or [{}])[0].get("body") or ""
+    extra = "\n".join("- %s → %s" % (r["q"], r["a"]) for r in db.query("SELECT q, a FROM learned WHERE synced = 0"))
+    perfil = ai.perfil_curto(body, 7000) + (("\n\nRespostas aprendidas:\n" + extra) if extra else "")
     state = db.setting_json("mail_state") or {}
     first_ever = not state
     if mailbox is None:

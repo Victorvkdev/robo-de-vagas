@@ -108,6 +108,13 @@ def cmd_saude(a):
         linhas.append("Sem resposta há 3+ dias: " + ", ".join(r["key"] for r in paradas))
     if not quebradas and not paradas:
         linhas.append("Todas as fontes responderam ✅")
+    # limpeza: vaga velha que nunca foi aprovada nem tem candidatura sai do banco (até 3.000 por semana)
+    limpas = db.query(
+        "DELETE FROM jobs WHERE rowid IN (SELECT rowid FROM jobs WHERE status IN ('nova','expirada','duplicada','pulada') "
+        "AND COALESCE(last_seen, first_seen, 0) < ? AND id NOT IN (SELECT job_id FROM applications WHERE job_id IS NOT NULL) "
+        "AND id NOT IN (SELECT job_id FROM events WHERE job_id IS NOT NULL) LIMIT 3000) RETURNING id", [now - 90 * 86400])
+    if limpas:
+        linhas.append("Limpeza: %d vagas com mais de 90 dias saíram do banco" % len(limpas))
     tg_send("\n".join(linhas))
     db.query("INSERT INTO runs(kind, started_ts, finished_ts, ok, summary) VALUES ('saude', ?, ?, 1, ?)",
              [now, time.time(), json.dumps(dict(mortas=len(mortas), quebradas=len(quebradas)))])

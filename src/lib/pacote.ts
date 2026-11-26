@@ -24,8 +24,23 @@ const TIPO: Record<string, string> = {
 
 function cvOf(j: PacoteJob): string {
   const pt = j.lang === "pt" || j.source === "gupy" || /gupy\.io/.test(j.url);
-  return pt ? "PT (CV_Victor_Cavalcante_BR.pdf)" : "EN (CV_Victor_Cavalcante.pdf)";
+  return pt ? "adaptar a partir do PT (CV_Victor_Cavalcante_BR.docx)" : "adaptar a partir do EN (CV_Victor_Cavalcante.docx)";
 }
+
+const CV_RULES = [
+  "## CV adaptado por vaga (obrigatório, nunca o genérico)",
+  "Antes de preencher cada vaga:",
+  "1. Leia a vaga e liste as 8 a 12 palavras-chave que importam (ferramentas, responsabilidades, área, senioridade, idioma).",
+  "2. Parta do CV Master no idioma da vaga, em VK_JobSearch/01_Curriculos/01_Master (CV_Victor_Cavalcante.docx em inglês,",
+  "   CV_Victor_Cavalcante_BR.docx em português).",
+  "3. Ajuste para o fit: título alinhado ao cargo da vaga, resumo de 3 linhas com as palavras-chave, ordem e escolha dos",
+  "   bullets (banco de bullets aprovados, seção 5 do Super_Contexto.md), skills e ferramentas na ordem que a vaga pede.",
+  "4. Use só experiências, empresas, números e ferramentas reais (seções 4 a 7 do Super_Contexto.md). Nunca invente.",
+  "   Se a vaga pede algo que eu talvez tenha e não está no contexto, me pergunte antes de omitir e grave a resposta na seção 14.",
+  "5. Formato ATS: 1 coluna, sem tabela, sem foto, 1 a 2 páginas, \"mais de 6 anos\" / \"6+ years\".",
+  "6. Salve em VK_JobSearch/01_Curriculos/02_Por_Vaga/AAAA-MM-DD_Empresa/CV_Victor_Cavalcante_Empresa.pdf e anexe ESSE arquivo.",
+  "7. Na carta de apresentação (se o formulário tiver o campo), use as mesmas palavras-chave.",
+];
 
 export async function pacoteJobs(db: D1Database): Promise<PacoteJob[]> {
   const r = await db
@@ -37,7 +52,7 @@ export async function pacoteJobs(db: D1Database): Promise<PacoteJob[]> {
   return r.results;
 }
 
-export function buildPacote(context: string, jobs: PacoteJob[], date: string): string {
+export function buildPacote(context: string, jobs: PacoteJob[], date: string, learned: { q: string; a: string; ts: number }[] = []): string {
   const head = [
     `# Candidaturas aprovadas (${date.slice(8, 10)}/${date.slice(5, 7)}) — ${jobs.length} vagas`,
     "",
@@ -57,7 +72,14 @@ export function buildPacote(context: string, jobs: PacoteJob[], date: string): s
     "",
     "---",
     "",
+    ...CV_RULES,
+    "",
+    "---",
+    "",
     context.trim(),
+    ...(learned.length
+      ? ["", "## Respostas que eu passei pelo bot (valem como as da seção 14)", ...learned.map((l) => `- ${l.q} → ${l.a}`)]
+      : []),
     "",
     "---",
     "",
@@ -91,7 +113,10 @@ export async function sendPacote(env: PacoteEnv, send: (t: string) => Promise<Re
   }
   const context = (await getSetting(env.DB, "sonnet_context")) ?? "";
   const date = localDate();
-  const md = buildPacote(context || "(contexto fixo ainda não carregado no banco)", jobs, date);
+  const learned = (
+    await env.DB.prepare(`SELECT q, a, ts FROM learned WHERE synced = 0 ORDER BY id`).all<{ q: string; a: string; ts: number }>()
+  ).results;
+  const md = buildPacote(context || "(contexto fixo ainda não carregado no banco)", jobs, date, learned);
   await setSetting(env.DB, "pacote_map", JSON.stringify(jobs.map((j) => j.id)));
   const fd = new FormData();
   fd.set("chat_id", env.ALLOWED_CHAT_ID);
@@ -133,4 +158,17 @@ export async function handleEnviei(env: PacoteEnv, text: string): Promise<string
     done.push(`${n}. ${esc(j.company || "?")}`);
   }
   return done.length ? `📨 Marquei ${done.length} como enviadas:\n${done.join("\n")}` : "Essas já estavam marcadas.";
+}
+
+/** "/aprendi pergunta → resposta": guarda no banco; o contexto_sonnet.sh leva para a seção 14 do Super_Contexto.md. */
+export async function handleAprendi(env: PacoteEnv, text: string): Promise<string> {
+  const body = text.replace(/^\/aprendi(@\S+)?\s*/i, "").trim();
+  const sep = ["→", "->", "=>", "=", ":"].find((x) => body.includes(x));
+  const i = sep ? body.indexOf(sep) : -1;
+  const m = i > 0 ? [body, body.slice(0, i), body.slice(i + sep!.length)] : null;
+  if (!m || !m[1].trim() || !m[2].trim()) return "Formato: /aprendi pergunta → resposta\nEx.: /aprendi Tem CNPJ? → Sim, MEI ativo";
+  await env.DB.prepare(`INSERT INTO learned (ts, q, a, synced) VALUES (?, ?, ?, 0)`)
+    .bind(Date.now() / 1000, m[1].trim().slice(0, 300), m[2].trim().slice(0, 600))
+    .run();
+  return "📚 Guardei. Já vale no próximo pacote e nos rascunhos; entra no Super Contexto quando você rodar ./scripts/contexto_sonnet.sh.";
 }
