@@ -66,10 +66,10 @@ export async function quietNow(db: D1Database, now = Date.now()): Promise<boolea
   return isQuiet(localHour(now), s, e);
 }
 
-/** Dispara o workflow "email" no modo enviar. Sem token: o ciclo de 15 min envia. */
-export async function dispatchSend(env: MailEnv): Promise<boolean> {
+/** Dispara um workflow do Actions (workflow_dispatch). Sem token: false. */
+export async function dispatchWorkflow(env: MailEnv, workflow: string, modo: string): Promise<boolean> {
   if (!env.GH_DISPATCH_TOKEN || !env.GH_REPO) return false;
-  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/email.yml/dispatches`, {
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/${workflow}/dispatches`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
@@ -77,10 +77,13 @@ export async function dispatchSend(env: MailEnv): Promise<boolean> {
       "user-agent": "robo-de-vagas-worker",
       "content-type": "application/json",
     },
-    body: JSON.stringify({ ref: "main", inputs: { modo: "enviar" } }),
+    body: JSON.stringify({ ref: "main", inputs: { modo } }),
   });
   return r.status === 204;
 }
+
+/** Dispara o workflow "email" no modo enviar. Sem token: o ciclo de 15 min envia. */
+export const dispatchSend = (env: MailEnv) => dispatchWorkflow(env, "email.yml", "enviar");
 
 export function draftKeyboard(id: number): Keyboard {
   return [

@@ -25,6 +25,7 @@ import {
   cancelEdit,
   cmdAgenda,
   cmdRascunhos,
+  dispatchWorkflow,
   fixClass,
   flushNotices,
   maybeEdit,
@@ -331,6 +332,12 @@ export async function dailyList(env: Env, now = Date.now()) {
   if ((await getSetting(env.DB, "list_sent")) === today) return;
   const list = await todayList(env.DB, today);
   if (!list.length) {
+    // o agendamento das 5h do GitHub às vezes não roda: às 8h o próprio Worker dispara a busca (1x por dia)
+    if ((await getSetting(env.DB, "busca_kick")) !== today && (await getSetting(env.DB, "list_ready")) !== today) {
+      await setSetting(env.DB, "busca_kick", today);
+      await dispatchWorkflow(env, "busca.yml", "busca").catch(() => false);
+      return;
+    }
     if (localHour(now) >= 11 && (await getSetting(env.DB, "list_warn")) !== today) {
       await setSetting(env.DB, "list_warn", today);
       await send(env, `⚠️ A lista de ${fmtDay(today)} não ficou pronta. A busca das 6h pode ter falhado: confira o Actions no GitHub.`);

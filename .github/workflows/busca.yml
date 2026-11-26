@@ -1,8 +1,10 @@
 name: busca
-# 6h em Fortaleza (09:00 UTC): coleta, pontua, grava no D1 e monta a lista. O Worker manda às 8h.
+# 5h23 em Fortaleza (08:23 UTC): coleta, pontua, grava no D1 e monta a lista. O Worker manda às 8h.
+# Minuto quebrado porque o GitHub descarta agendamentos na hora cheia quando está cheio.
+# Se mesmo assim não rodar, o Worker dispara a busca às 8h.
 on:
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "23 8 * * *"
   workflow_dispatch:
     inputs:
       modo:
