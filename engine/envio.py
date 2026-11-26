@@ -106,6 +106,9 @@ def run(db, gem=None, mode="real", limit=10, r2=None, now=None, job_ids=None, la
             res = ats.run(browser, j, perfil, cv_path, mode=mode, cover_path=cover, learned=learned, gem=gem,
                           shot_path=shot, source_name=SRC_NAME.get(j.get("source") or "", ""))
             st = res["status"]
+            ded = [(a, b) for a, b, c in res["answers"] if c == "deduzida"]
+            ded_txt = ("\n🧠 Deduzi (confira; corrija com /aprendi):" + "".join(
+                "\n• %s → %s" % (_esc(a[:70]), _esc(b[:60])) for a, b in ded[:8])) if ded else ""
             proof_key = (r2.put_file("proof/%s/%s.png" % (today, j["id"]), res["shot"], "image/png")
                          if (r2 and res.get("shot") and st in ("enviada", "conferir")) else None)
             answers = json.dumps([dict(campo=a, resposta=b, origem=c) for a, b, c in res["answers"]], ensure_ascii=False)
@@ -124,7 +127,7 @@ def run(db, gem=None, mode="real", limit=10, r2=None, now=None, job_ids=None, la
                         cap = ("🤖❓ <b>Cliquei em enviar e não vi confirmação</b>: %s\nConfira o print. Se não saiu, toque abaixo "
                                "que ela volta para o pacote." % head)
                         kb = [[{"text": "↩️ Não saiu: vai pro pacote", "callback_data": "nr:%s" % j["id"]}]]
-                    tg_file(res["shot"], cap, "image/png", kb, "comprovante_%s.png" % (j["company"] or "vaga")[:30])
+                    tg_file(res["shot"], cap + ded_txt, "image/png", kb, "comprovante_%s.png" % (j["company"] or "vaga")[:30])
                     tg_file(cv_path, "📄 CV enviado: " + head, "application/pdf")
             else:
                 out["ensaio" if st == "ensaio" else "kit"] += 1
@@ -146,7 +149,7 @@ def run(db, gem=None, mode="real", limit=10, r2=None, now=None, job_ids=None, la
                         if res.get("questions"):
                             cap += "\nEnsine com /aprendi pergunta → resposta para a próxima ir sozinha."
                     if res.get("shot"):
-                        tg_file(res["shot"], cap, "image/png", None, "formulario_%s.png" % (j["company"] or "vaga")[:30])
+                        tg_file(res["shot"], cap + ded_txt, "image/png", None, "formulario_%s.png" % (j["company"] or "vaga")[:30])
                     else:
                         tg_file(cv_path, cap, "application/pdf")
     finally:

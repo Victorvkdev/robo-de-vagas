@@ -30,6 +30,7 @@ RULES = [
     (r"years of (relevant |professional )?experience|anos de experiencia|how many years", "DADOS.anos_experiencia_numero"),
     (r"salary|compensation|pretensao|remuneracao|expected (pay|rate)|rate expectation|desired pay|hourly rate", "PRET"),
     (r"notice period|aviso previo", "DADOS.aviso_previo"),
+    (r"presencial|on-?site|in-?office|hibrido|hybrid|trabalhar no escritorio", "PRESENCIAL"),
     (r"start date|when can you start|earliest start|disponibilidade|availability|data de inicio|quando pode comecar",
      "DADOS.disponibilidade"),
     (r"sponsor", "DADOS.precisa_sponsorship_remoto"),
@@ -93,6 +94,7 @@ class Respostas:
         self.learned = list(perfil.learned) + [(q, a) for q, a in learned_db]
         self.source_name = source_name
         self.log = []  # (rótulo, resposta, origem)
+        self.deduced = 0
 
     # ------------------------------------------------------------ valores
     def dado(self, key):
@@ -196,6 +198,8 @@ class Respostas:
             v = key
         elif key == "PRET":
             v = self.pret(label)
+        elif key == "PRESENCIAL":  # só remoto, sem mudança (Teresina)
+            v = "No" if self.lang == "en" and not re.search(r"[ãçõéê]", label) else "Não"
         elif key == "SOURCE":
             v = self.source_name or ("Company website" if self.lang == "en" else "Site da empresa")
         elif key == "AUTH_GENERIC":
@@ -214,9 +218,41 @@ class Respostas:
             if v:
                 self.log.append((label, v[:60], "padrao-ia"))
                 return v
+        if v is None:
+            v = self.deduce(label, kind, options)
+            if v:
+                self.log.append((label, v[:80], "deduzida"))
+                return v
         if v is not None:
             self.log.append((label, v if len(str(v)) < 80 else str(v)[:77] + "...", key or "?"))
         return v
+
+    def deduce(self, label, kind, options=None):
+        """Pergunta óbvia (sim/não, opção de lista, fato simples): a IA responde SÓ com o que está no Super Contexto.
+        Número fora da lista aprovada ou dúvida = None (vira kit). Tudo que for deduzido aparece no Telegram."""
+        if not self.gem or self.deduced >= 8:
+            return None
+        self.deduced += 1
+        opts = [o for o in (options or []) if norm(o) and not re.match(r"^(select|selecione|choose|--)", norm(o))]
+        try:
+            out = self.gem.generate(
+                "Você preenche um formulário de candidatura por esta pessoa. Use SÓ os fatos do contexto abaixo.\n"
+                "Responda apenas se a resposta for ÓBVIA a partir do contexto (ex.: sim/não, escolher uma opção da lista, "
+                "dado simples). Se exigir opinião, texto longo, número que não está no contexto, dado sensível ou "
+                "documento, devolva null.\n\nCONTEXTO:\n%s\n\nVaga: %s na %s. Idioma da resposta: %s.\n"
+                "Pergunta: \"%s\"\n%s\nResponda só JSON {\"resposta\": \"...\" ou null}."
+                % (self.p.md[:24000], self.job.get("title"), self.job.get("company"),
+                   "português" if self.lang == "pt" else "inglês" if not re.search(r"[ãçõé]", label) else "português",
+                   label[:300], ("Opções (copie uma exatamente): " + " | ".join(opts[:30])) if opts else ""))
+            v = (json.loads(re.sub(r"^```(?:json)?|```$", "", out.strip())) or {}).get("resposta")
+        except Exception:  # noqa: BLE001
+            return None
+        if not v or not isinstance(v, str) or len(v) > 400:
+            return None
+        nums = set(re.findall(r"\d+(?:[.,]\d+)?", v))
+        if nums - self.p.allowed_numbers() - set(re.findall(r"\d+(?:[.,]\d+)?", " ".join(opts))):
+            return None
+        return v.strip()
 
 
 def pick_option(answer, options):

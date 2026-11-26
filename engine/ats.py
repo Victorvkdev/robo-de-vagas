@@ -164,6 +164,27 @@ def _fill_combobox(page, loc, value):
     page.wait_for_timeout(300)
 
 
+def _check(page, f):
+    """Marca checkbox de consentimento: clique normal, depois clique no texto, depois JS. True se ficou marcado."""
+    loc = page.locator('[data-robo-opt="%s_0"]' % f["key"]).first
+    tries = (lambda: loc.check(timeout=4000, force=True),
+             lambda: page.get_by_text(f["label"][:60], exact=False).first.click(timeout=4000),
+             lambda: loc.evaluate("e => { e.checked = true; e.dispatchEvent(new Event('input', {bubbles: true}));"
+                                  " e.dispatchEvent(new Event('change', {bubbles: true})); }"))
+    for t in tries:
+        try:
+            if loc.is_checked():
+                return True
+            t()
+            page.wait_for_timeout(300)
+        except Exception:  # noqa: BLE001
+            continue
+    try:
+        return loc.is_checked()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def fill_form(page, resp, cv_path, cover_path=None):
     """Preenche o que estiver na tela. Devolve (preenchidos, faltando_obrigatorios)."""
     fields = page.evaluate(FIELDS_JS)
@@ -221,10 +242,10 @@ def fill_form(page, resp, cv_path, cover_path=None):
                 if f["kind"] == "checkbox" and len(f["options"]) == 1:
                     # checkbox único: só marca consentimento/termos (resposta "Sim")
                     if v and pick_option(v, ["Yes", "Sim"]):
-                        page.locator('[data-robo-opt="%s_0"]' % f["key"]).evaluate(
-                            "e => { if (!e.checked) e.click(); if (!e.checked) { e.checked = true;"
-                            " e.dispatchEvent(new Event('change', {bubbles: true})); } }")
-                        filled += 1
+                        if _check(page, f):
+                            filled += 1
+                        elif f["required"]:
+                            missing.append(f["label"])
                     elif f["required"]:
                         missing.append(f["label"])
                     continue
